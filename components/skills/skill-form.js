@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useUser } from '@/hooks/useUser';
+import { useUser } from '@/hooks/use-user';
 
 export default function SkillForm({ onSuccess }) {
     const { user } = useUser();
@@ -85,13 +85,13 @@ export default function SkillForm({ onSuccess }) {
     };
 
     return (
-        <div className="max-w-2xl mx-auto p-6 bg-white dark:bg-gray-800 rounded-lg shadow-lg">
+        <div className="max-w-2xl mx-auto p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700">
             <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-white">
                 Share Your Skill
             </h2>
 
             {error && (
-                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 rounded-lg">
                     {error}
                 </div>
             )}
@@ -111,7 +111,7 @@ export default function SkillForm({ onSuccess }) {
                         required
                         maxLength={100}
                         placeholder="e.g., Web Development, Guitar Playing"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     />
                     <p className="text-sm text-gray-500 mt-1">
                         {formData.title.length}/100 characters
@@ -132,7 +132,7 @@ export default function SkillForm({ onSuccess }) {
                         rows={4}
                         maxLength={1000}
                         placeholder="Describe your skill, what you can teach, and your experience..."
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     />
                     <p className="text-sm text-gray-500 mt-1">
                         {formData.description.length}/1000 characters
@@ -150,7 +150,7 @@ export default function SkillForm({ onSuccess }) {
                         value={formData.category}
                         onChange={handleChange}
                         required
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     >
                         <option value="">Select a category</option>
                         <option value="Technology">Technology</option>
@@ -176,7 +176,7 @@ export default function SkillForm({ onSuccess }) {
                         value={formData.level}
                         onChange={handleChange}
                         required
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     >
                         <option value="Beginner">Beginner</option>
                         <option value="Intermediate">Intermediate</option>
@@ -197,7 +197,7 @@ export default function SkillForm({ onSuccess }) {
                         value={formData.location}
                         onChange={handleChange}
                         placeholder="e.g., New York, Online, Mumbai"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     />
                 </div>
 
@@ -211,7 +211,7 @@ export default function SkillForm({ onSuccess }) {
                         name="deliveryMethod"
                         value={formData.deliveryMethod}
                         onChange={handleChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     >
                         <option value="In-person">In-person</option>
                         <option value="Online">Online</option>
@@ -231,7 +231,7 @@ export default function SkillForm({ onSuccess }) {
                         value={formData.estimatedDuration}
                         onChange={handleChange}
                         placeholder="e.g., 2 hours, 1 week, 3 sessions"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     />
                 </div>
 
@@ -247,7 +247,7 @@ export default function SkillForm({ onSuccess }) {
                         value={formData.tags}
                         onChange={handleChange}
                         placeholder="e.g., React, JavaScript, Frontend"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                     />
                     <p className="text-sm text-gray-500 mt-1">
                         Separate tags with commas. Each tag max 30 characters.
@@ -258,7 +258,7 @@ export default function SkillForm({ onSuccess }) {
                 <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="w-full bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 py-3 px-4 rounded-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                 >
                     {isSubmitting ? 'Submitting...' : 'Submit Skill'}
                 </button>

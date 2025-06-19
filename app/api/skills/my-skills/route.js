@@ -3,25 +3,26 @@ import { createClient } from '@/lib/supabase/server';
 import connectDB from '@/lib/mongodb';
 import Skill from '@/models/Skill';
 
-export async function GET() {
+export async function GET(req) {
     try {
-        await connectDB();
-
         // Get and verify Supabase session
-        const supabase = createClient();
-        const { data: { session }, error: authError } = await supabase.auth.getSession();
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-        if (authError || !session) {
+        if (authError || !user) {
             return NextResponse.json(
                 { error: 'Authentication required' },
                 { status: 401 }
             );
         }
 
+        // Connect to MongoDB after successful auth
+        await connectDB();
+
         // Fetch user's skills
-        const skills = await Skill.find({ ownerSupabaseId: session.user.id })
+        const skills = await Skill.find({ ownerSupabaseId: user.id })
             .sort({ createdAt: -1 })
-            .populate('owner', 'name email profilePicture');
+            .populate('owner', 'name email avatar'); // Changed from 'profilePicture' to 'avatar'
 
         return NextResponse.json({
             success: true,
@@ -39,7 +40,13 @@ export async function GET() {
                 exchangeCount: skill.exchangeCount,
                 viewCount: skill.viewCount,
                 createdAt: skill.createdAt,
-                updatedAt: skill.updatedAt
+                updatedAt: skill.updatedAt,
+                // Include owner details in response
+                owner: {
+                    name: skill.owner.name,
+                    email: skill.owner.email,
+                    avatar: skill.owner.avatar
+                }
             }))
         });
 

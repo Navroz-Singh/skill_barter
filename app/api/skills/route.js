@@ -6,20 +6,18 @@ import User from '@/models/User';
 
 // Handle POST request to create a new skill
 export async function POST(request) {
-    try {
-        // Connect to MongoDB
-        await connectDB();
-
+    try {        
         // Get and verify Supabase session
-        const supabase = createClient();
-        const { data: { session }, error: authError } = await supabase.auth.getSession();
-
-        if (authError || !session) {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
             return NextResponse.json(
                 { error: 'Authentication required' },
                 { status: 401 }
             );
         }
+        await connectDB();
 
         // Get request body
         const body = await request.json();
@@ -43,9 +41,9 @@ export async function POST(request) {
         }
 
         // Find user in MongoDB using Supabase user ID
-        const user = await User.findOne({ supabaseId: session.user.id });
+        const mongoUser = await User.findOne({ supabaseId: user.id });
 
-        if (!user) {
+        if (!mongoUser) {
             return NextResponse.json(
                 { error: 'User profile not found. Please complete your profile first.' },
                 { status: 404 }
@@ -79,11 +77,11 @@ export async function POST(request) {
         const newSkill = new Skill({
             title: title.trim(),
             description: description.trim(),
-            category: category, // Keep original case as per your enum
-            level: level, // Keep original case as per your enum
+            category: category,
+            level: level,
             tags: processedTags,
-            owner: user._id, // Using 'owner' as per your model
-            ownerSupabaseId: session.user.id, // Using 'ownerSupabaseId' as per your model
+            owner: mongoUser._id,
+            ownerSupabaseId: user.id,
             location: location?.trim() || '',
             deliveryMethod: deliveryMethod || 'Both',
             estimatedDuration: estimatedDuration?.trim() || '',
@@ -96,16 +94,21 @@ export async function POST(request) {
         // Save skill to database
         const savedSkill = await newSkill.save();
 
-        // Populate owner details for response
-        await savedSkill.populate('owner', 'name email profilePicture');
-
-        // Update user's skills array if your User model has a skills field
+        // Update user's skills array and stats
         await User.findByIdAndUpdate(
-            user._id,
+            mongoUser.id,
             {
-                $push: { skills: savedSkill._id }
+                $push: { skills: savedSkill._id },
+                $inc: {
+                    'stats.totalSkills': 1,
+                    'stats.activeSkills': 1
+                },
+                $set: { lastActive: new Date() }
             }
         );
+
+        // Populate owner details for response
+        await savedSkill.populate('owner', 'name email avatar');
 
         return NextResponse.json(
             {
@@ -128,7 +131,7 @@ export async function POST(request) {
                     owner: {
                         name: savedSkill.owner.name,
                         email: savedSkill.owner.email,
-                        profilePicture: savedSkill.owner.profilePicture
+                        avatar: savedSkill.owner.avatar
                     }
                 }
             },
@@ -209,7 +212,7 @@ export async function GET(request) {
 
         // Fetch skills with owner details, sorted by newest first
         const skills = await Skill.find(query)
-            .populate('owner', 'name email profilePicture')
+            .populate('owner', 'name email avatar')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
@@ -236,7 +239,7 @@ export async function GET(request) {
                 owner: {
                     name: skill.owner.name,
                     email: skill.owner.email,
-                    profilePicture: skill.owner.profilePicture
+                    avatar: skill.owner.avatar
                 }
             })),
             pagination: {
