@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 const navRoutes = [
     { name: 'Home', href: '/' },
     { name: 'Browse', href: '/browse' },
-    { name: 'My Skills', href: '/my-skills', authRequired: true },
+    { name: 'My Skills', href: '/skills/my-skills', authRequired: true },
     { name: 'Exchanges', href: '/exchanges', authRequired: true },
     { name: 'About', href: '/about' },
 ];
