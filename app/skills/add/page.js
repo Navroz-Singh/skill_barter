@@ -29,7 +29,7 @@ export default function AddSkillPage() {
     // Show loading state
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
+            <div className="min-h-screen bg-white dark:bg-gray-900 flex items-center justify-center">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 dark:border-white mx-auto"></div>
                     <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
@@ -40,11 +40,11 @@ export default function AddSkillPage() {
 
     return (
         <div className="min-h-screen pt-10 bg-white dark:bg-gray-900">
-            <div className="container mx-auto px-4 py-8">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {/* Breadcrumb Navigation */}
                 <nav className="mb-6 text-sm">
-                    <ol className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-                        <li><a href="/skills" className="hover:text-gray-900 dark:hover:text-white">Skills</a></li>
+                    <ol className="flex items-center space-x-2 text-gray-600 dark:text-gray-400">
+                        <li><a href="/skills" className="hover:text-[var(--parrot)] transition-colors duration-200">Skills</a></li>
                         <li>/</li>
                         <li className="text-gray-900 dark:text-white">Add Skill</li>
                     </ol>
@@ -52,10 +52,10 @@ export default function AddSkillPage() {
 
                 {/* Page Header */}
                 <div className="text-center mb-12">
-                    <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
+                    <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-4">
                         Add Your Skill
                     </h1>
-                    <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+                    <p className="text-lg sm:text-xl text-[var(--parrot)] max-w-2xl mx-auto">
                         Share your expertise with the community. Whether you're a beginner or expert,
                         your skills can help others learn and grow.
                     </p>
@@ -64,14 +64,14 @@ export default function AddSkillPage() {
                 {/* Success Message */}
                 {successMessage && (
                     <div className="max-w-2xl mx-auto mb-6">
-                        <div className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white px-6 py-4 rounded-2xl">
+                        <div className="bg-green-100 dark:bg-green-900 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-300 px-6 py-4 rounded-lg">
                             <div className="flex items-center gap-3">
-                                <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
                                 <div>
                                     <span className="block font-medium">{successMessage}</span>
-                                    <span className="block text-sm text-gray-600 dark:text-gray-400 mt-1">Redirecting to your skills...</span>
+                                    <span className="block text-sm text-green-600 dark:text-green-400 mt-1">Redirecting to your skills...</span>
                                 </div>
                             </div>
                         </div>
@@ -82,7 +82,7 @@ export default function AddSkillPage() {
                 <SkillForm onSuccess={handleSkillSuccess} />
 
                 {/* Help Section */}
-                <div className="max-w-2xl mx-auto mt-8 p-6 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl">
+                <div className="max-w-2xl mx-auto mt-8 p-6 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
                     <div className="flex items-start gap-3 mb-4">
                         <div className="flex-shrink-0">
                             <svg className="w-6 h-6 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -90,28 +90,28 @@ export default function AddSkillPage() {
                             </svg>
                         </div>
                         <div>
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+                            <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
                                 Tips for a Great Skill Listing
                             </h3>
                             <ul className="space-y-2 text-gray-700 dark:text-gray-300 text-sm">
                                 <li className="flex items-start gap-2">
-                                    <span className="text-gray-400 mt-1">•</span>
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Be specific about what you can teach</span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                    <span className="text-gray-400 mt-1">•</span>
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Include your experience level honestly</span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                    <span className="text-gray-400 mt-1">•</span>
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Add relevant tags to help others find your skill</span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                    <span className="text-gray-400 mt-1">•</span>
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Mention if you prefer online or in-person teaching</span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                    <span className="text-gray-400 mt-1">•</span>
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Provide a realistic time estimate for learning</span>
                                 </li>
                             </ul>
