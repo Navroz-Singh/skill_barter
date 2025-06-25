@@ -1,0 +1,103 @@
+├── app
+│   ├── api
+│   │   ├── chat
+│   │   │   ├── [roomid]
+│   │   │   │   ├── messages
+│   │   │   │   │   └── route.js
+│   │   │   │   └── route.js
+│   │   │   └── create-room
+│   │   │       └── route.js
+│   │   ├── chats
+│   │   │   ├── [roomid]
+│   │   │   │   └── route.js
+│   │   │   ├── unread-count
+│   │   │   │   └── route.js
+│   │   │   └── route.js
+│   │   ├── skills
+│   │   │   ├── [id]
+│   │   │   │   └── route.js
+│   │   │   ├── my-skills
+│   │   │   │   └── route.js
+│   │   │   └── route.js
+│   │   └── user
+│   │       └── sync
+│   │           └── route.js
+│   ├── auth
+│   │   ├── callback
+│   │   │   └── route.js
+│   │   └── page.js
+│   ├── browse
+│   │   └── page.js
+│   ├── chats
+│   │   ├── chat
+│   │   │   └── [roomid]
+│   │   │       └── page.js
+│   │   └── page.js
+│   ├── my-skills
+│   │   ├── add
+│   │   │   └── page.js
+│   │   ├── edit
+│   │   │   └── [id]
+│   │   │       └── page.js
+│   │   └── page.js
+│   ├── skill
+│   │   └── [id]
+│   │       └── page.js
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.js
+│   └── page.js
+├── components
+│   ├── browse
+│   │   └── FilterSidebar.js
+│   ├── chat
+│   │   ├── ChatWindow.js
+│   │   └── MessageArea.js
+│   ├── Providers
+│   │   └── ThemeProvider.js
+│   ├── skills
+│   │   └── skill-form.js
+│   ├── ui
+│   │   ├── cta-section.js
+│   │   ├── featured-skills-section.js
+│   │   ├── footer.js
+│   │   ├── hero-section.js
+│   │   ├── how-it-works-section.js
+│   │   ├── logo.js
+│   │   ├── social-proof-section.js
+│   │   ├── ThemeToggleButton.js
+│   │   └── value-propositions-section.js
+│   └── Navbar.js
+├── hooks
+│   └── use-user.js
+├── lib
+│   ├── supabase
+│   │   ├── client.js
+│   │   └── server.js
+│   ├── mongodb.js
+│   └── socket.js
+├── models
+│   ├── Exchange.js
+│   ├── Message.js
+│   ├── Skill.js
+│   ├── User.js
+│   └── UserChatRoom.js
+├── utils
+│   ├── NavbarWrapper.js
+│   └── ThemeProviderWrapper.js
+├── .env.local
+├── .gitignore
+├── eslint.config.mjs
+├── generate-tree.js
+├── jsconfig.json
+├── middleware.js
+├── next.config.mjs
+├── package-lock.json
+├── package.json
+├── postcss.config.mjs
+├── README.md
+├── server.js
+├── temp.md
+├── temp.txt
+├── todo.txt
+└── tree.txt

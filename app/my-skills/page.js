@@ -111,15 +111,6 @@ export default function MySkillsPage() {
     return (
         <div className="min-h-screen pt-8 bg-white dark:bg-gray-900">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                {/* Breadcrumb Navigation */}
-                <nav className="mb-6 text-sm">
-                    <ol className="flex items-center space-x-2 text-gray-600 dark:text-gray-400">
-                        <li><Link href="/skills" className="hover:text-[var(--parrot)] transition-colors duration-200">Skills</Link></li>
-                        <li>/</li>
-                        <li className="text-gray-900 dark:text-white">My Skills</li>
-                    </ol>
-                </nav>
-
                 {/* Page Header */}
                 <div className="text-center mb-4">
                     <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-4">
@@ -311,7 +302,7 @@ export default function MySkillsPage() {
                                 {/* Action Buttons */}
                                 <div className="flex gap-2">
                                     <Link
-                                        href={`/skills/edit/${skill.id}`}
+                                        href={`/my-skills/edit/${skill.id}`}
                                         className="flex-1 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-900 dark:text-white text-sm py-2 px-3 rounded-lg font-medium transition-all duration-200 border border-gray-200 dark:border-gray-700 text-center"
                                     >
                                         Edit

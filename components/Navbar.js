@@ -1,4 +1,3 @@
-// app/ui/navbar.jsx
 'use client';
 
 import Link from 'next/link';
@@ -14,7 +13,7 @@ import { useRouter } from 'next/navigation';
 const navRoutes = [
     { name: 'Home', href: '/' },
     { name: 'Browse', href: '/browse' },
-    { name: 'My Skills', href: '/skills/my-skills', authRequired: true },
+    { name: 'My Skills', href: '/my-skills', authRequired: true },
     { name: 'Exchanges', href: '/exchanges', authRequired: true },
     { name: 'About', href: '/about' },
 ];
@@ -79,7 +78,7 @@ export default function Navbar() {
                                         : 'text-gray-700 dark:text-gray-300 hover:text-black dark:hover:text-white'
                                         }`}
                                 >
-                                    {route.name}
+                                    <span>{route.name}</span>
 
                                     <span
                                         className={`absolute bottom-[-0.5rem] left-0 h-0.5 transition-all duration-300 ease-out ${pathname === route.href
@@ -157,8 +156,6 @@ export default function Navbar() {
                                 )}
                             </div>
                         )}
-
-
 
                         {loading ? (
                             <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" />
@@ -273,12 +270,14 @@ export default function Navbar() {
                                         key={route.href}
                                         href={route.href}
                                         onClick={() => setIsMobileMenuOpen(false)}
-                                        className={`block px-3 py-2 rounded-md text-base font-medium transition-colors duration-200 ${pathname === route.href
+                                        className={`flex items-center justify-between px-3 py-2 rounded-md text-base font-medium transition-colors duration-200 ${pathname === route.href
                                             ? 'text-black dark:text-white bg-gray-100 dark:bg-gray-800'
                                             : 'text-gray-700 dark:text-gray-300 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                                             }`}
                                     >
-                                        {route.name}
+                                        <span className="relative flex-1">
+                                            {route.name}
+                                        </span>
                                     </Link>
                                 );
                             })}

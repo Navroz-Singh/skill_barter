@@ -40,7 +40,7 @@ const exchangeSchema = new mongoose.Schema({
         required: true
     },
 
-    // Initiator's Offer
+    // Initiator's Offer (KEEPING ALL ORIGINAL FIELDS)
     initiatorOffer: {
         type: {
             type: String,
@@ -76,7 +76,7 @@ const exchangeSchema = new mongoose.Schema({
         }
     },
 
-    // Recipient's Offer
+    // Recipient's Offer (KEEPING ALL ORIGINAL FIELDS)
     recipientOffer: {
         type: {
             type: String,
@@ -125,46 +125,6 @@ const exchangeSchema = new mongoose.Schema({
         default: 'pending'
     },
 
-    // Consent and Acceptance
-    consent: {
-        initiatorAccepted: {
-            type: Boolean,
-            default: false
-        },
-        recipientAccepted: {
-            type: Boolean,
-            default: false
-        },
-        initiatorAcceptedAt: Date,
-        recipientAcceptedAt: Date
-    },
-
-    // Milestones
-    milestones: [{
-        title: {
-            type: String,
-            required: true,
-            maxLength: [100, 'Milestone title cannot exceed 100 characters']
-        },
-        description: String,
-        assignedTo: {
-            type: String,
-            enum: ['initiator', 'recipient', 'both'],
-            required: true
-        },
-        dueDate: Date,
-        status: {
-            type: String,
-            enum: ['pending', 'in_progress', 'completed', 'overdue'],
-            default: 'pending'
-        },
-        completedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
-        },
-        completedAt: Date
-    }],
-
     // Payment and Escrow
     payment: {
         escrowAmount: {
@@ -179,18 +139,6 @@ const exchangeSchema = new mongoose.Schema({
         transactionId: String
     },
 
-    // Communication
-    chatRoomId: {
-        type: String,
-        unique: true,
-        default: () => `chat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    },
-    lastMessageAt: Date,
-    messageCount: {
-        type: Number,
-        default: 0
-    },
-
     // Delivery Status
     delivery: {
         initiatorDelivered: {
@@ -202,7 +150,9 @@ const exchangeSchema = new mongoose.Schema({
             default: false
         },
         initiatorDeliveredAt: Date,
-        recipientDeliveredAt: Date,
+        recipientDelivered
+
+            : Date,
         deliveryNotes: {
             initiator: String,
             recipient: String
@@ -237,23 +187,72 @@ const exchangeSchema = new mongoose.Schema({
         }
     },
 
-    // Terms
-    terms: {
-        customTerms: String,
-        cancellationPolicy: {
-            type: String,
-            enum: ['flexible', 'moderate', 'strict'],
-            default: 'moderate'
-        }
-    },
-
     // Expiry
     expiresAt: {
         type: Date,
         default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+    },
+
+    chatMetadata: {
+        firstMessageAt: Date,           // When chat conversation started
+        lastMessageAt: Date,            // Last message timestamp
+        messageCount: {                 // Quick message count tracking
+            type: Number,
+            default: 0
+        },
+        lastActivityBy: {               // Who was last active in chat
+            type: String,               // supabaseId
+            enum: ['initiator', 'recipient']
+        }
+    },
+
+    // Negotiation Progress Tracking (NEW)
+    negotiationMetadata: {
+        roundCount: {                   // How many negotiation rounds
+            type: Number,
+            default: 0
+        },
+        lastNegotiationUpdate: Date,    // When offers were last modified
+        negotiationStartedAt: Date,     // When status changed to 'negotiating'
+        acceptedAt: Date               // When status changed to 'accepted'
+    },
+
+    // Activity Timestamps (NEW)
+    activityTimestamps: {
+        initiatorLastSeen: Date,        // Last time initiator was active
+        recipientLastSeen: Date,        // Last time recipient was active
+        statusChangedAt: Date,          // When current status was set
+        lastOfferUpdateAt: Date         // When any offer was last updated
     }
 }, {
     timestamps: true
 });
+
+exchangeSchema.methods.isChatAvailable = function () {
+    return ['negotiating', 'accepted', 'in_progress'].includes(this.status);
+};
+
+exchangeSchema.methods.getChatParticipants = function () {
+    return [
+        { supabaseId: this.initiator.supabaseId, role: 'initiator' },
+        { supabaseId: this.recipient.supabaseId, role: 'recipient' }
+    ];
+};
+
+exchangeSchema.methods.updateLastActivity = function (userSupabaseId) {
+    const isInitiator = this.initiator.supabaseId === userSupabaseId;
+    if (isInitiator) {
+        this.activityTimestamps.initiatorLastSeen = new Date();
+    } else {
+        this.activityTimestamps.recipientLastSeen = new Date();
+    }
+    return this.save();
+};
+
+exchangeSchema.methods.incrementMessageCount = function () {
+    this.chatMetadata.messageCount += 1;
+    this.chatMetadata.lastMessageAt = new Date();
+    return this.save();
+};
 
 export default mongoose.models.Exchange || mongoose.model('Exchange', exchangeSchema);

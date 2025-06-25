@@ -172,4 +172,3 @@ Based on your SBart project implementation summary and current progress, here ar
 
 Your current foundation with authentication, database models, and homepage is solid - now you need to build the core functionality that makes the skill bartering actually work!
 
-[1] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_4f230d41-c468-4771-83fc-a8dc7e8147a7/e4e77622-ded5-4bc4-a1fc-c5f2e6c5b1ee/paste-2.txt

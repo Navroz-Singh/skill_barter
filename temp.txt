@@ -1,0 +1,2912 @@
+//app/exchange/[id]/page.js
+'use client';
+
+import { ArrowLeft } from 'lucide-react';
+import React from 'react';
+import ExchangeWithChat from '@/components/exchange/ExchangeWithChat';
+
+export default function ExchangeDetailPage({ params }) {
+    const { id } =  React.use(params);
+    
+    return (
+        <div className="min-h-screen pt-16 bg-gray-50 dark:bg-gray-900">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                {/* Back Button */}
+                <button
+                    onClick={() => window.history.back()}
+                    className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-6"
+                >
+                    <ArrowLeft className="w-5 h-5" />
+                    <span className="font-medium">Back to Exchanges</span>
+                </button>
+
+                {/* Page Title */}
+                <div className="mb-8">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                        Exchange Details
+                    </h1>
+                    <p className="text-gray-600 dark:text-gray-400 mt-2">
+                        View exchange details and communicate with the other party
+                    </p>
+                </div>
+
+                {/* Main Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+                    {/* Exchange Details (Left Column) */}
+                    <div className="lg:col-span-2 space-y-6">
+                        {/* Exchange info components would go here */}
+                        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                                Exchange Information
+                            </h2>
+                            <p className="text-gray-600 dark:text-gray-400">
+                                Exchange details will be displayed here...
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Chat Interface (Right Column) */}
+                    <div className="lg:col-span-1">
+                        <ExchangeWithChat exchangeId={id} />
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
+
+
+
+
+// hooks/useExchangeChat.js
+
+'use client';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useExchangeSocket } from '@/lib/socket';
+import { validateMessageContent, getChatRoomId } from '@/utils/exchangeChatHelpers';
+
+export function useExchangeChat(exchangeId, currentUser) {
+    // Core state (minimal useState)
+    const [messages, setMessages] = useState([]);
+    const [connectionStatus, setConnectionStatus] = useState('disconnected');
+    const [error, setError] = useState(null);
+    const [otherUserTyping, setOtherUserTyping] = useState(false);
+
+    // Refs for non-rendering values
+    const socketManagerRef = useRef(null);
+    const messageQueueRef = useRef([]);
+    const reconnectTimeoutRef = useRef(null);
+    const typingTimeoutRef = useRef(null);
+    const isTypingRef = useRef(false);
+    const lastMessageIdRef = useRef(null);
+
+    // Initialize socket manager
+    if (!socketManagerRef.current) {
+        socketManagerRef.current = useExchangeSocket();
+    }
+
+    // Message synchronization
+    const syncMessages = useCallback(async () => {
+        try {
+            const response = await fetch(`/api/exchanges/${exchangeId}/messages`);
+            const data = await response.json();
+
+            if (data.success) {
+                setMessages(data.messages);
+                lastMessageIdRef.current = data.messages[data.messages.length - 1]?._id;
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error syncing messages:', error);
+            return false;
+        }
+    }, [exchangeId]);
+
+    // Send message with retry logic
+    const sendMessage = useCallback(async (content) => {
+        const validation = validateMessageContent(content);
+        if (!validation.isValid) {
+            setError(validation.error);
+            return false;
+        }
+
+        const messageData = {
+            content: validation.trimmedContent,
+            senderSupabaseId: currentUser.id,
+            timestamp: new Date().toISOString(),
+            tempId: `temp-${Date.now()}`
+        };
+
+        // Optimistic update
+        const optimisticMessage = {
+            _id: messageData.tempId,
+            content: messageData.content,
+            type: 'user',
+            sender: {
+                supabaseId: currentUser.id,
+                role: 'unknown' // Will be updated when real message arrives
+            },
+            createdAt: new Date(),
+            readBy: [{ supabaseId: currentUser.id }],
+            status: 'sending'
+        };
+
+        setMessages(prev => [...prev, optimisticMessage]);
+
+        try {
+            // Send via API
+            const response = await fetch(`/api/exchanges/${exchangeId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    content: messageData.content,
+                    senderSupabaseId: currentUser.id
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Replace optimistic message with real message
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg._id === messageData.tempId
+                            ? { ...data.message, status: 'sent' }
+                            : msg
+                    )
+                );
+
+                // Send via socket for real-time
+                socketManagerRef.current.sendExchangeMessage(exchangeId, messageData.content);
+                return true;
+            } else {
+                throw new Error(data.error);
+            }
+
+        } catch (error) {
+            console.error('Error sending message:', error);
+
+            // Mark message as failed
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg._id === messageData.tempId
+                        ? { ...msg, status: 'failed' }
+                        : msg
+                )
+            );
+
+            // Queue for retry if connection issue
+            if (connectionStatus !== 'connected') {
+                messageQueueRef.current.push(messageData);
+            }
+
+            setError('Failed to send message. Will retry when connected.');
+            return false;
+        }
+    }, [exchangeId, currentUser.id, connectionStatus]);
+
+    // Process queued messages when reconnected
+    const processMessageQueue = useCallback(async () => {
+        const queue = messageQueueRef.current;
+        messageQueueRef.current = [];
+
+        for (const messageData of queue) {
+            await sendMessage(messageData.content);
+        }
+    }, [sendMessage]);
+
+    // Handle typing indicators
+    const startTyping = useCallback(() => {
+        if (!isTypingRef.current && connectionStatus === 'connected') {
+            isTypingRef.current = true;
+            socketManagerRef.current.startTyping();
+        }
+
+        // Clear existing timeout
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        // Auto-stop typing after 3 seconds
+        typingTimeoutRef.current = setTimeout(() => {
+            stopTyping();
+        }, 3000);
+    }, [connectionStatus]);
+
+    const stopTyping = useCallback(() => {
+        if (isTypingRef.current) {
+            isTypingRef.current = false;
+            socketManagerRef.current.stopTyping();
+        }
+
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = null;
+        }
+    }, []);
+
+    // Mark messages as read
+    const markAsRead = useCallback(async () => {
+        try {
+            await fetch(`/api/exchanges/${exchangeId}/mark-read`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userSupabaseId: currentUser.id })
+            });
+        } catch (error) {
+            console.error('Error marking messages as read:', error);
+        }
+    }, [exchangeId, currentUser.id]);
+
+    // Socket connection management
+    useEffect(() => {
+        const socketManager = socketManagerRef.current;
+
+        const connectToExchange = async () => {
+            try {
+                await socketManager.connect();
+                socketManager.joinExchangeChat(exchangeId);
+                setConnectionStatus('connected');
+                setError(null);
+
+                // Process any queued messages
+                await processMessageQueue();
+
+            } catch (error) {
+                console.error('Socket connection failed:', error);
+                setConnectionStatus('disconnected');
+                setError('Connection failed. Retrying...');
+
+                // Retry connection after delay
+                reconnectTimeoutRef.current = setTimeout(connectToExchange, 3000);
+            }
+        };
+
+        connectToExchange();
+
+        return () => {
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+            }
+            socketManager.leaveExchangeChat();
+        };
+    }, [exchangeId, processMessageQueue]);
+
+    // Socket event handlers
+    useEffect(() => {
+        const socketManager = socketManagerRef.current;
+        if (!socketManager.isReady()) return;
+
+        // Handle new messages from other users
+        const handleNewMessage = (messageData) => {
+            // Avoid duplicates
+            if (messageData.sender.supabaseId !== currentUser.id) {
+                setMessages(prev => {
+                    // Check for duplicates
+                    const exists = prev.some(msg => msg._id === messageData._id);
+                    if (exists) return prev;
+
+                    return [...prev, { ...messageData, status: 'received' }];
+                });
+
+                // Auto-mark as read after short delay
+                setTimeout(markAsRead, 1000);
+            }
+        };
+
+        // Handle system messages
+        const handleSystemMessage = (systemData) => {
+            setMessages(prev => [...prev, { ...systemData, status: 'system' }]);
+        };
+
+        // Handle typing indicators
+        const handleTyping = (typingData) => {
+            if (typingData.userSupabaseId !== currentUser.id) {
+                setOtherUserTyping(typingData.isTyping);
+            }
+        };
+
+        // Handle connection status changes
+        const handleDisconnect = () => {
+            setConnectionStatus('disconnected');
+            setError('Disconnected. Attempting to reconnect...');
+        };
+
+        const handleReconnect = () => {
+            setConnectionStatus('connected');
+            setError(null);
+            syncMessages(); // Sync messages after reconnection
+        };
+
+        // Attach event listeners
+        socketManager.onNewExchangeMessage(handleNewMessage);
+        socketManager.onOfferSystemMessage(handleSystemMessage);
+        socketManager.onStatusSystemMessage(handleSystemMessage);
+        socketManager.onUserTyping(handleTyping);
+        socketManager.onChatClosed(() => setError('Chat has been closed'));
+
+        // Connection events
+        socketManager.socket?.on('disconnect', handleDisconnect);
+        socketManager.socket?.on('reconnect', handleReconnect);
+
+        return () => {
+            socketManager.offNewExchangeMessage(handleNewMessage);
+            socketManager.offOfferSystemMessage(handleSystemMessage);
+            socketManager.offStatusSystemMessage(handleSystemMessage);
+            socketManager.offUserTyping(handleTyping);
+            socketManager.socket?.off('disconnect', handleDisconnect);
+            socketManager.socket?.off('reconnect', handleReconnect);
+        };
+    }, [currentUser.id, syncMessages, markAsRead]);
+
+    // Initial message sync
+    useEffect(() => {
+        syncMessages();
+    }, [syncMessages]);
+
+    // Cleanup typing on unmount
+    useEffect(() => {
+        return () => {
+            stopTyping();
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+            }
+        };
+    }, [stopTyping]);
+
+    return {
+        // State
+        messages,
+        connectionStatus,
+        error,
+        otherUserTyping,
+
+        // Actions
+        sendMessage,
+        startTyping,
+        stopTyping,
+        markAsRead,
+        syncMessages,
+
+        // Utils
+        isConnected: connectionStatus === 'connected',
+        hasError: !!error,
+        clearError: () => setError(null)
+    };
+}
+
+
+
+
+
+// utils/exchangeChatHelpers.js
+
+// Chat availability status constants
+export const CHAT_AVAILABLE_STATUSES = ['negotiating', 'accepted', 'in_progress'];
+export const CHAT_UNAVAILABLE_STATUSES = ['pending', 'completed', 'cancelled', 'expired'];
+
+// Exchange status messages
+export const EXCHANGE_STATUS_MESSAGES = {
+    'pending': {
+        message: 'Chat will be available once negotiation begins',
+        color: 'text-yellow-600 dark:text-yellow-400',
+        bgColor: 'bg-yellow-50 dark:bg-yellow-900/20',
+        borderColor: 'border-yellow-200 dark:border-yellow-800'
+    },
+    'negotiating': {
+        message: 'Chat is active - negotiate your exchange details',
+        color: 'text-blue-600 dark:text-blue-400',
+        bgColor: 'bg-blue-50 dark:bg-blue-900/20',
+        borderColor: 'border-blue-200 dark:border-blue-800'
+    },
+    'accepted': {
+        message: 'Chat is active - coordinate your exchange',
+        color: 'text-green-600 dark:text-green-400',
+        bgColor: 'bg-green-50 dark:bg-green-900/20',
+        borderColor: 'border-green-200 dark:border-green-800'
+    },
+    'in_progress': {
+        message: 'Chat is active - track progress and communicate',
+        color: 'text-purple-600 dark:text-purple-400',
+        bgColor: 'bg-purple-50 dark:bg-purple-900/20',
+        borderColor: 'border-purple-200 dark:border-purple-800'
+    },
+    'completed': {
+        message: 'Exchange completed - chat is now closed',
+        color: 'text-gray-600 dark:text-gray-400',
+        bgColor: 'bg-gray-50 dark:bg-gray-900/20',
+        borderColor: 'border-gray-200 dark:border-gray-800'
+    },
+    'cancelled': {
+        message: 'Exchange cancelled - chat is no longer available',
+        color: 'text-red-600 dark:text-red-400',
+        bgColor: 'bg-red-50 dark:bg-red-900/20',
+        borderColor: 'border-red-200 dark:border-red-800'
+    },
+    'expired': {
+        message: 'Exchange expired - chat is no longer available',
+        color: 'text-orange-600 dark:text-orange-400',
+        bgColor: 'bg-orange-50 dark:bg-orange-900/20',
+        borderColor: 'border-orange-200 dark:border-orange-800'
+    }
+};
+
+/**
+ * Check if chat is available for given exchange status
+ * @param {string} status - Exchange status
+ * @returns {boolean} - Whether chat is available
+ */
+export const isChatAvailable = (status) => {
+    return CHAT_AVAILABLE_STATUSES.includes(status);
+};
+
+/**
+ * Get status message and styling for exchange status
+ * @param {string} status - Exchange status
+ * @returns {object} - Message object with styling
+ */
+export const getExchangeStatusInfo = (status) => {
+    return EXCHANGE_STATUS_MESSAGES[status] || {
+        message: 'Unknown exchange status',
+        color: 'text-gray-600 dark:text-gray-400',
+        bgColor: 'bg-gray-50 dark:bg-gray-900/20',
+        borderColor: 'border-gray-200 dark:border-gray-800'
+    };
+};
+
+/**
+ * Validate if user can access exchange chat
+ * @param {object} exchange - Exchange object
+ * @param {string} userSupabaseId - User's Supabase ID
+ * @returns {object} - Validation result
+ */
+export const validateChatAccess = (exchange, userSupabaseId) => {
+    if (!exchange) {
+        return {
+            canAccess: false,
+            reason: 'Exchange not found',
+            code: 'EXCHANGE_NOT_FOUND'
+        };
+    }
+
+    // Check if user is a participant
+    const isInitiator = exchange.initiator?.supabaseId === userSupabaseId;
+    const isRecipient = exchange.recipient?.supabaseId === userSupabaseId;
+    const isParticipant = isInitiator || isRecipient;
+
+    if (!isParticipant) {
+        return {
+            canAccess: false,
+            reason: 'You are not a participant in this exchange',
+            code: 'NOT_PARTICIPANT'
+        };
+    }
+
+    // Check if chat is available for current status
+    const chatAvailable = isChatAvailable(exchange.status);
+
+    if (!chatAvailable) {
+        const statusInfo = getExchangeStatusInfo(exchange.status);
+        return {
+            canAccess: false,
+            reason: statusInfo.message,
+            code: 'CHAT_UNAVAILABLE',
+            status: exchange.status,
+            userRole: isInitiator ? 'initiator' : 'recipient'
+        };
+    }
+
+    return {
+        canAccess: true,
+        userRole: isInitiator ? 'initiator' : 'recipient',
+        otherParticipant: isInitiator ? exchange.recipient : exchange.initiator,
+        status: exchange.status
+    };
+};
+
+/**
+ * Format chat participant display name
+ * @param {object} participant - Participant object
+ * @param {string} role - User role (initiator/recipient)
+ * @param {boolean} isCurrentUser - Whether this is current user
+ * @returns {string} - Formatted display name
+ */
+export const formatParticipantName = (participant, role, isCurrentUser = false) => {
+    if (isCurrentUser) return 'You';
+
+    const name = participant?.userId?.name || participant?.name || 'Unknown User';
+    const roleLabel = role === 'initiator' ? 'Initiator' : 'Recipient';
+
+    return `${name} (${roleLabel})`;
+};
+
+/**
+ * Calculate exchange timeline information
+ * @param {object} exchange - Exchange object
+ * @returns {object} - Timeline information
+ */
+export const getExchangeTimeline = (exchange) => {
+    const now = new Date();
+    const createdAt = new Date(exchange.createdAt);
+    const expiresAt = exchange.expiresAt ? new Date(exchange.expiresAt) : null;
+
+    // Time since creation
+    const daysSinceCreation = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
+
+    // Time remaining
+    let timeRemaining = null;
+    let daysRemaining = null;
+    let isExpiringSoon = false;
+
+    if (expiresAt && expiresAt > now) {
+        timeRemaining = expiresAt.getTime() - now.getTime();
+        daysRemaining = Math.ceil(timeRemaining / (1000 * 60 * 60 * 24));
+        isExpiringSoon = daysRemaining <= 3; // Expiring in 3 days or less
+    }
+
+    return {
+        daysSinceCreation,
+        daysRemaining,
+        timeRemaining,
+        isExpiringSoon,
+        isExpired: expiresAt && expiresAt <= now,
+        createdAt,
+        expiresAt
+    };
+};
+
+/**
+ * Get chat room identifier for socket
+ * @param {string} exchangeId - Exchange ID
+ * @returns {string} - Socket room identifier
+ */
+export const getChatRoomId = (exchangeId) => {
+    return `exchange-${exchangeId}`;
+};
+
+/**
+ * Check if message is from current user
+ * @param {object} message - Message object
+ * @param {string} userSupabaseId - Current user's Supabase ID
+ * @returns {boolean} - Whether message is from current user
+ */
+export const isMessageFromCurrentUser = (message, userSupabaseId) => {
+    return message?.sender?.supabaseId === userSupabaseId;
+};
+
+/**
+ * Get unread message count for user
+ * @param {array} messages - Array of messages
+ * @param {string} userSupabaseId - User's Supabase ID
+ * @returns {number} - Count of unread messages
+ */
+export const getUnreadMessageCount = (messages, userSupabaseId) => {
+    return messages.filter(message =>
+        !message.readBy?.some(read => read.supabaseId === userSupabaseId)
+    ).length;
+};
+
+/**
+ * Format message timestamp for display
+ * @param {string|Date} timestamp - Message timestamp
+ * @param {boolean} showTime - Whether to show time
+ * @returns {string} - Formatted timestamp
+ */
+export const formatMessageTimestamp = (timestamp, showTime = true) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInHours = (now - date) / (1000 * 60 * 60);
+
+    if (diffInHours < 1) {
+        return 'Just now';
+    } else if (diffInHours < 24) {
+        return showTime ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
+    } else if (diffInHours < 48) {
+        return showTime ? `Yesterday ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Yesterday';
+    } else {
+        return date.toLocaleDateString();
+    }
+};
+
+/**
+ * Validate message content before sending
+ * @param {string} content - Message content
+ * @returns {object} - Validation result
+ */
+export const validateMessageContent = (content) => {
+    if (!content || !content.trim()) {
+        return {
+            isValid: false,
+            error: 'Message cannot be empty'
+        };
+    }
+
+    if (content.length > 1000) {
+        return {
+            isValid: false,
+            error: 'Message cannot exceed 1000 characters'
+        };
+    }
+
+    return {
+        isValid: true,
+        trimmedContent: content.trim()
+    };
+};
+
+/**
+ * Generate system message content based on event type
+ * @param {string} eventType - Type of system event
+ * @param {object} eventData - Event data
+ * @returns {object} - System message content and styling
+ */
+export const generateSystemMessageContent = (eventType, eventData) => {
+    switch (eventType) {
+        case 'offer_updated':
+            return {
+                text: `${eventData.offerType === 'initiator' ? 'Initiator' : 'Recipient'} updated their offer`,
+                icon: 'ArrowRightLeft',
+                color: 'text-blue-600 dark:text-blue-400'
+            };
+        case 'status_changed':
+            return {
+                text: `Exchange status changed to "${eventData.newStatus}"`,
+                icon: 'AlertCircle',
+                color: 'text-green-600 dark:text-green-400'
+            };
+        case 'exchange_created':
+            return {
+                text: 'Exchange conversation started',
+                icon: 'MessageCircle',
+                color: 'text-gray-600 dark:text-gray-400'
+            };
+        case 'deadline_warning':
+            return {
+                text: `Exchange expires in ${eventData.daysRemaining} days`,
+                icon: 'Clock',
+                color: 'text-orange-600 dark:text-orange-400'
+            };
+        default:
+            return {
+                text: 'System notification',
+                icon: 'Bell',
+                color: 'text-gray-600 dark:text-gray-400'
+            };
+    }
+};
+
+
+
+
+
+
+
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, User } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import SkillDetailsCard from '@/components/skills/SkillDetailsCard';
+import UserProfileCard from '@/components/skills/UserProfileCard';
+
+export default function SkillDetailPage({ params }) {
+    const { id } = React.use(params);
+
+    // Core state
+    const [skillData, setSkillData] = useState(null);
+    const [currentUser, setCurrentUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [isClient, setIsClient] = useState(false);
+
+    // FETCH SKILL DETAILS
+    const fetchSkillDetails = async () => {
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/skills/${id}`);
+            const data = await response.json();
+            
+            if (data.skill) {
+                setSkillData(data.skill);
+            } else {
+                setError(data.error || 'Failed to load skill');
+            }
+        } catch (err) {
+            setError('Failed to load skill details');
+            console.error('Error fetching skill:', err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // FETCH CURRENT USER
+    const fetchUserData = async () => {
+        try {
+            const supabase = createClient();
+            const { data: { user }, error } = await supabase.auth.getUser();
+
+            if (!error && user) {
+                setCurrentUser(user);
+            }
+        } catch (error) {
+            console.error('Error fetching user data:', error);
+        }
+    };
+
+    // INITIAL LOAD
+    useEffect(() => {
+        if (id) {
+            setIsClient(true);
+            fetchSkillDetails();
+            fetchUserData();
+        }
+    }, [id]);
+
+    // Loading states
+    if (!isClient) {
+        return (
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                    <div className="animate-pulse">
+                        <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+                        <div className="h-64 bg-gray-200 rounded"></div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (loading) {
+        return (
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                    <div className="animate-pulse">
+                        <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-4"></div>
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            <div className="lg:col-span-2">
+                                <div className="h-64 bg-gray-200 dark:bg-gray-700 rounded mb-4"></div>
+                                <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                            </div>
+                            <div className="h-96 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (error || !skillData) {
+        return (
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                    <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <User className="w-8 h-8 text-red-600 dark:text-red-400" />
+                        </div>
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Skill Not Found</h2>
+                        <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+                        <button
+                            onClick={() => window.history.back()}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                        >
+                            Go Back
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen pt-10 bg-white dark:bg-gray-900">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                {/* BACK BUTTON */}
+                <button
+                    onClick={() => window.history.back()}
+                    className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-6"
+                >
+                    <ArrowLeft className="w-5 h-5" />
+                    <span className="font-medium">Back to Browse</span>
+                </button>
+
+                {/* MAIN CONTENT GRID */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <SkillDetailsCard skillData={skillData} />
+                    <UserProfileCard
+                        skillData={skillData}
+                        currentUser={currentUser}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
+
+'use client';
+
+import { Star, Eye, RotateCcw, Timer, Building, Monitor, Globe, MapPin, Calendar, CheckCircle, Clock, ArrowRightLeft, DollarSign } from 'lucide-react';
+
+export default function SkillDetailsCard({ skillData }) {
+    // Helper functions
+    const getDeliveryIcon = (method) => {
+        switch (method) {
+            case 'In-person':
+                return <Building className="w-5 h-5" />
+            case 'Online':
+                return <Monitor className="w-5 h-5" />
+            case 'Both':
+                return <Globe className="w-5 h-5" />
+            default:
+                return <Globe className="w-5 h-5" />
+        }
+    }
+
+    const getLevelColor = (level) => {
+        switch (level) {
+            case 'Beginner': return 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300'
+            case 'Intermediate': return 'text-amber-700 bg-amber-100 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300'
+            case 'Advanced': return 'text-orange-700 bg-orange-100 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300'
+            case 'Expert': return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-900/30 dark:text-red-300'
+            default: return 'text-gray-700 bg-gray-100 border-gray-300 dark:bg-gray-800 dark:text-gray-300'
+        }
+    }
+
+    const formatDate = (dateString) => {
+        const date = new Date(dateString)
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        })
+    }
+
+    return (
+        <div className="lg:col-span-2 space-y-6">
+            {/* SKILL HEADER */}
+            <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-start justify-between mb-4">
+                    <div className="flex-1">
+                        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-3 leading-tight">
+                            {skillData.title}
+                        </h1>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="inline-block px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-full border border-gray-200 dark:border-gray-700">
+                                {skillData.category}
+                            </span>
+
+                            <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full border ${getLevelColor(skillData.level)}`}>
+                                <Star className="w-4 h-4" />
+                                {skillData.level}
+                            </span>
+
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-sm font-semibold rounded-full ${skillData.isAvailable
+                                ? 'bg-green-100 text-green-800 border border-green-300 dark:bg-green-900/30 dark:text-green-300'
+                                : 'bg-red-100 text-red-800 border border-red-300 dark:bg-red-900/30 dark:text-red-300'
+                                }`}>
+                                {skillData.isAvailable ? (
+                                    <>
+                                        <CheckCircle className="w-4 h-4" />
+                                        Available
+                                    </>
+                                ) : (
+                                    <>
+                                        <Clock className="w-4 h-4" />
+                                        Busy
+                                    </>
+                                )}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* SKILL STATS */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="text-center">
+                        <div className="flex items-center justify-center mb-1">
+                            <Eye className="w-5 h-5 text-gray-500" />
+                        </div>
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">{skillData.viewCount || 0}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Views</div>
+                    </div>
+
+                    <div className="text-center">
+                        <div className="flex items-center justify-center mb-1">
+                            <RotateCcw className="w-5 h-5 text-gray-500" />
+                        </div>
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">{skillData.exchangeCount || 0}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Exchanges</div>
+                    </div>
+
+                    <div className="text-center">
+                        <div className="flex items-center justify-center mb-1">
+                            {getDeliveryIcon(skillData.deliveryMethod)}
+                        </div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-white">{skillData.deliveryMethod || 'Both'}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Delivery</div>
+                    </div>
+
+                    <div className="text-center">
+                        <div className="flex items-center justify-center mb-1">
+                            <Timer className="w-5 h-5 text-gray-500" />
+                        </div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-white">{skillData.estimatedDuration || 'Flexible'}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Duration</div>
+                    </div>
+                </div>
+            </div>
+
+            {/* SKILL DESCRIPTION */}
+            <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">About This Skill</h2>
+                <p className="text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">
+                    {skillData.description}
+                </p>
+            </div>
+
+            {/* EXCHANGE PREFERENCES */}
+            <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Exchange Preferences</h2>
+                <div className="space-y-4">
+                    <div>
+                        <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2 uppercase tracking-wide">
+                            💼 What I'm looking for in exchange:
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                                <ArrowRightLeft className="w-4 h-4 text-green-600" />
+                                <span className="text-sm font-medium text-green-700 dark:text-green-300">Skills Exchange</span>
+                            </div>
+                            <div className="flex items-center gap-2 px-3 py-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                                <DollarSign className="w-4 h-4 text-blue-600" />
+                                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Payment</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {skillData.location && (
+                        <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                            <MapPin className="w-5 h-5" />
+                            <span className="font-medium">{skillData.location}</span>
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                        <Calendar className="w-5 h-5" />
+                        <span className="font-medium">Posted on {formatDate(skillData.createdAt)}</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* TAGS */}
+            {skillData.tags && skillData.tags.length > 0 && (
+                <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Tags</h2>
+                    <div className="flex flex-wrap gap-2">
+                        {skillData.tags.map((tag, index) => (
+                            <span
+                                key={index}
+                                className="inline-block px-3 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium rounded-lg border border-blue-200 dark:border-blue-800"
+                            >
+                                #{tag}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+
+
+
+
+
+
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Star, CheckCircle, Handshake, MessageCircle, ArrowRightLeft, Loader2, User } from 'lucide-react';
+
+export default function UserProfileCard({ skillData, currentUser }) {
+    const router = useRouter();
+
+    // useState only for values that need re-rendering
+    const [loading, setLoading] = useState(false);
+    const [existingExchange, setExistingExchange] = useState(null);
+    const [checkingExchange, setCheckingExchange] = useState(false);
+
+    // Derived flags – always up-to-date on every render
+    const isOwnSkill = currentUser?.id === skillData.ownerSupabaseId;
+    const canInitiateExchange = !!currentUser && !isOwnSkill;
+    // Cache flag to avoid repeated API calls
+    const hasCheckedExchangeRef = useRef(false);
+
+    // Check for existing exchanges with this skill owner
+    const checkExistingExchange = async () => {
+        if (!canInitiateExchange || hasCheckedExchangeRef.current) return;
+
+        setCheckingExchange(true);
+        hasCheckedExchangeRef.current = true;
+
+        try {
+            const response = await fetch(
+                `/api/exchanges?skillId=${skillData._id}&otherUserId=${skillData.ownerSupabaseId}`
+            );
+            const data = await response.json();
+
+            if (data.success && data.exchanges?.length > 0) {
+                // Find active exchange (not completed, cancelled, or expired)
+                const activeExchange = data.exchanges.find(ex =>
+                    ['pending', 'negotiating', 'accepted', 'in_progress'].includes(ex.status)
+                );
+                setExistingExchange(activeExchange || null);
+            }else{
+                console.log('No existing exchanges found');
+            }
+        } catch (error) {
+            console.error('Error checking existing exchanges:', error);
+        } finally {
+            setCheckingExchange(false);
+        }
+    };
+
+    // Create new exchange
+    const startExchange = async () => {
+        if (!canInitiateExchange || loading) return;
+
+        setLoading(true);
+        try {
+            const response = await fetch('/api/exchanges', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    recipientSkillId: skillData._id,
+                    recipientUserId: skillData.owner._id,
+                    recipientSupabaseId: skillData.ownerSupabaseId,
+                    exchangeType: 'skill_for_skill', // Default type
+                    initiatorOffer: {
+                        type: 'skill',
+                        description: `Interested in exchanging skills for "${skillData.title}"`,
+                        deliveryMethod: 'Both'
+                    },
+                    recipientOffer: {
+                        type: 'skill',
+                        skillTitle: skillData.title,
+                        description: skillData.description,
+                        deliveryMethod: skillData.deliveryMethod || 'Both'
+                    }
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Navigate to the new exchange
+                router.push(`/exchange/${data.exchange._id}`);
+            } else {
+                alert(data.error || 'Failed to create exchange');
+            }
+        } catch (error) {
+            console.error('Error creating exchange:', error);
+            alert('Failed to create exchange. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Navigate to existing exchange
+    const goToExistingExchange = () => {
+        if (existingExchange) {
+            router.push(`/exchange/${existingExchange._id}`);
+        }
+    };
+
+    // View user profile
+    const viewProfile = () => {
+        router.push(`/profile/${skillData.ownerSupabaseId}`);
+    };
+
+    // Check for existing exchanges once the user is known and exchange is allowed
+    useEffect(() => {
+        if (canInitiateExchange) {
+            checkExistingExchange();
+        }
+    }, [canInitiateExchange]);
+
+    return (
+        <div className="space-y-6">
+            {/* USER PROFILE CARD */}
+            <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700 sticky top-4">
+                <div className="text-center mb-6">
+                    <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                        <span className="text-2xl font-bold text-white">
+                            {skillData.owner?.name?.[0] || skillData.owner?.firstName?.[0] || 'U'}
+                        </span>
+                    </div>
+
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-1">
+                        {skillData.owner?.name || skillData.owner?.firstName || 'Anonymous'}
+                    </h3>
+
+                    <p className="text-gray-600 dark:text-gray-400 text-sm mb-2">
+                        Skill Provider
+                    </p>
+
+                    <div className="flex items-center justify-center gap-1 mb-4">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                                key={star}
+                                className="w-4 h-4 fill-yellow-400 text-yellow-400"
+                            />
+                        ))}
+                        <span className="text-sm text-gray-600 dark:text-gray-400 ml-2">4.8 (24 reviews)</span>
+                    </div>
+                </div>
+
+                {/* USER STATS */}
+                <div className="grid grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <div className="text-center">
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">12</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Total Skills</div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">8</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Exchanges</div>
+                    </div>
+                </div>
+
+                {/* ACTION BUTTONS - EXCHANGE INTEGRATED */}
+                <div className="space-y-3">
+                    {/* Primary Action Button */}
+                    {isOwnSkill ? (
+                        // User's own skill
+                        <button
+                            disabled
+                            className="w-full px-4 py-3 bg-gray-400 cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
+                        >
+                            Your Skill
+                        </button>
+                    ) : !currentUser ? (
+                        // User not logged in
+                        <button
+                            onClick={() => router.push('/auth')}
+                            className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+                        >
+                            Sign In to Exchange
+                        </button>
+                    ) : existingExchange ? (
+                        // Has existing exchange
+                        <button
+                            onClick={goToExistingExchange}
+                            className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                        >
+                            <MessageCircle className="w-4 h-4" />
+                            Continue Exchange
+                        </button>
+                    ) : (
+                        // Default: Start or Checking/Starting
+                        <button
+                            onClick={startExchange}
+                            disabled={loading || checkingExchange}
+                            className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:shadow-none flex items-center justify-center gap-2"
+                        >
+                            {loading || checkingExchange ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    {checkingExchange ? 'Checking...' : 'Starting Exchange...'}
+                                </>
+                            ) : (
+                                <>
+                                    <ArrowRightLeft className="w-4 h-4" />
+                                    Start Exchange
+                                </>
+                            )}
+                        </button>
+                    )}
+
+                    {/* Secondary Action - View Profile */}
+                    <button
+                        onClick={viewProfile}
+                        className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                        <User className="w-4 h-4" />
+                        View Profile
+                    </button>
+                </div>
+
+                {/* EXISTING EXCHANGE STATUS */}
+                {existingExchange && (
+                    <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                                Active Exchange
+                            </span>
+                        </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400">
+                            Status: {existingExchange.status.replace('_', ' ')}
+                        </p>
+                    </div>
+                )}
+
+                {/* TRUST INDICATORS */}
+                <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                        <div className="flex items-center gap-1">
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                            <span>Verified</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <Handshake className="w-4 h-4 text-blue-500" />
+                            <span>Trusted</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
+
+
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { Send, Loader2, AlertCircle, MessageCircle, Wifi, WifiOff } from 'lucide-react';
+import ChatMessage from './ChatMessage';
+import { useExchangeChat } from '@/hooks/useExchangeChat';
+import { isChatAvailable } from '@/utils/exchangeChatHelpers';
+
+export default function ChatInterface({ exchangeId, currentUser, exchangeStatus }) {
+    // Local UI state
+    const [newMessage, setNewMessage] = useState('');
+    const [sending, setSending] = useState(false);
+
+    // Refs
+    const messagesEndRef = useRef(null);
+    const inputRef = useRef(null);
+
+    // Use the custom hook for all chat logic
+    const {
+        messages,
+        connectionStatus,
+        error,
+        otherUserTyping,
+        sendMessage,
+        startTyping,
+        stopTyping,
+        markAsRead,
+        isConnected,
+        hasError,
+        clearError
+    } = useExchangeChat(exchangeId, currentUser);
+
+    // Auto-scroll to bottom
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    // Handle send message
+    const handleSendMessage = async () => {
+        if (!newMessage.trim() || sending || !isConnected) return;
+
+        setSending(true);
+        const success = await sendMessage(newMessage.trim());
+
+        if (success) {
+            setNewMessage('');
+            stopTyping();
+        }
+
+        setSending(false);
+    };
+
+    // Handle key press
+    const handleKeyPress = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+        } else {
+            startTyping();
+        }
+    };
+
+    // Auto-scroll when messages change
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages.length]);
+
+    // Mark messages as read when component becomes visible
+    useEffect(() => {
+        if (messages.length > 0) {
+            markAsRead();
+        }
+    }, [messages.length, markAsRead]);
+
+    // Check if chat is available
+    const chatAvailable = isChatAvailable(exchangeStatus);
+
+    if (!chatAvailable) {
+        return (
+            <div className="h-96 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 flex items-center justify-center">
+                <div className="text-center p-6">
+                    <MessageCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Chat Unavailable</h3>
+                    <p className="text-gray-600 dark:text-gray-400">
+                        Chat is not available for exchange status: {exchangeStatus}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-96 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 flex flex-col">
+            {/* Chat Header with Connection Status */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <h3 className="font-semibold text-gray-900 dark:text-white">Exchange Chat</h3>
+                    {isConnected ? (
+                        <Wifi className="w-4 h-4 text-green-500" />
+                    ) : (
+                        <WifiOff className="w-4 h-4 text-red-500" />
+                    )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                        {messages.length} messages
+                    </span>
+                    <div className={`px-2 py-1 rounded text-xs ${isConnected
+                            ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                            : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                        }`}>
+                        {connectionStatus}
+                    </div>
+                </div>
+            </div>
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-1">
+                {messages.length === 0 ? (
+                    <div className="text-center py-8">
+                        <MessageCircle className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
+                        <p className="text-gray-500 dark:text-gray-400">No messages yet. Start the conversation!</p>
+                    </div>
+                ) : (
+                    messages.map((message) => (
+                        <ChatMessage
+                            key={message._id}
+                            message={message}
+                            currentUserSupabaseId={currentUser.id}
+                        />
+                    ))
+                )}
+
+                {/* Typing Indicator */}
+                {otherUserTyping && (
+                    <div className="flex items-center gap-2 px-4 py-2">
+                        <div className="flex gap-1">
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        </div>
+                        <span className="text-sm text-gray-500 dark:text-gray-400">Other user is typing...</span>
+                    </div>
+                )}
+
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Error Display */}
+            {hasError && (
+                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/20 border-t border-red-200 dark:border-red-800">
+                    <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm">
+                        <AlertCircle className="w-4 h-4" />
+                        <span>{error}</span>
+                        <button
+                            onClick={clearError}
+                            className="ml-auto text-red-500 hover:text-red-700 dark:hover:text-red-300"
+                        >
+                            ×
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Message Input */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                        <textarea
+                            ref={inputRef}
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            onKeyDown={handleKeyPress}
+                            placeholder={isConnected ? "Type your message..." : "Connecting..."}
+                            rows={1}
+                            className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none disabled:opacity-50"
+                            style={{ minHeight: '44px', maxHeight: '120px' }}
+                            disabled={sending || !isConnected}
+                        />
+                    </div>
+                    <button
+                        onClick={handleSendMessage}
+                        disabled={!newMessage.trim() || sending || !isConnected}
+                        className="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:transform-none disabled:shadow-none"
+                    >
+                        {sending ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                            <Send className="w-5 h-5" />
+                        )}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
+
+
+
+
+
+'use client';
+
+import { useRef } from 'react';
+import { formatDistanceToNow } from 'date-fns';
+import { CheckCheck, Clock, ArrowRightLeft, AlertCircle, Bot } from 'lucide-react';
+
+export default function ChatMessage({ message, currentUserSupabaseId }) {
+    const isCurrentUser = message.sender?.supabaseId === currentUserSupabaseId;
+    const isSystemMessage = message.type !== 'user';
+
+    // useRef for formatted time to avoid recalculations on re-renders
+    const formattedTimeRef = useRef(null);
+    if (!formattedTimeRef.current) {
+        try {
+            const date = new Date(message.createdAt);
+            formattedTimeRef.current = formatDistanceToNow(date, { addSuffix: true });
+        } catch {
+            formattedTimeRef.current = 'Just now';
+        }
+    }
+
+    // Check if message is read by other user (computed value, no useState needed)
+    const isReadByOther = message.readBy?.some(
+        read => read.supabaseId !== currentUserSupabaseId
+    );
+
+    // System message content helper (pure function, no state needed)
+    const getSystemMessageContent = () => {
+        const { systemData } = message;
+        switch (systemData?.event) {
+            case 'offer_updated':
+                return {
+                    icon: <ArrowRightLeft className="w-4 h-4" />,
+                    text: `${systemData.details.offerType === 'initiator' ? 'Initiator' : 'Recipient'} updated their offer`,
+                    color: 'text-blue-600 dark:text-blue-400'
+                };
+            case 'status_changed':
+                return {
+                    icon: <AlertCircle className="w-4 h-4" />,
+                    text: `Exchange status changed to "${systemData.details.newStatus}"`,
+                    color: 'text-green-600 dark:text-green-400'
+                };
+            case 'exchange_created':
+                return {
+                    icon: <Bot className="w-4 h-4" />,
+                    text: 'Exchange conversation started',
+                    color: 'text-gray-600 dark:text-gray-400'
+                };
+            default:
+                return {
+                    icon: <Bot className="w-4 h-4" />,
+                    text: 'System notification',
+                    color: 'text-gray-600 dark:text-gray-400'
+                };
+        }
+    };
+
+    // Render system message
+    if (isSystemMessage) {
+        const systemContent = getSystemMessageContent();
+        return (
+            <div className="flex items-center justify-center my-4">
+                <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-full text-sm border border-gray-200 dark:border-gray-700">
+                    <div className={systemContent.color}>
+                        {systemContent.icon}
+                    </div>
+                    <span className={`font-medium ${systemContent.color}`}>{systemContent.text}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{formattedTimeRef.current}</span>
+                </div>
+            </div>
+        );
+    }
+
+    // Render user message
+    return (
+        <div className={`flex items-start gap-3 group ${isCurrentUser ? 'flex-row-reverse' : 'flex-row'} mb-4`}>
+            {/* User Avatar */}
+            <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold text-white transition-all duration-200 ${isCurrentUser
+                    ? 'bg-blue-500 group-hover:bg-blue-600'
+                    : 'bg-gray-500 group-hover:bg-gray-600'
+                }`}>
+                {message.sender?.role === 'initiator' ? 'I' : 'R'}
+            </div>
+
+            {/* Message Content */}
+            <div className={`flex flex-col max-w-[75%] ${isCurrentUser ? 'items-end' : 'items-start'}`}>
+                {/* Sender Name */}
+                <div className={`text-xs text-gray-500 dark:text-gray-400 mb-1 ${isCurrentUser ? 'text-right' : 'text-left'}`}>
+                    {isCurrentUser ? 'You' : `${message.sender?.role === 'initiator' ? 'Initiator' : 'Recipient'}`}
+                </div>
+
+                {/* Message Bubble */}
+                <div className={`relative px-4 py-3 rounded-2xl shadow-sm transition-all duration-200 group-hover:shadow-md ${isCurrentUser
+                        ? 'bg-blue-500 text-white rounded-br-md'
+                        : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-700 rounded-bl-md'
+                    }`}>
+                    {/* Message Text */}
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                        {message.content}
+                    </p>
+
+                    {/* Message Meta Info */}
+                    <div className={`flex items-center gap-1 mt-2 text-xs ${isCurrentUser
+                            ? 'text-blue-100 justify-end'
+                            : 'text-gray-500 dark:text-gray-400 justify-start'
+                        }`}>
+                        {/* Timestamp */}
+                        <span>{formattedTimeRef.current}</span>
+
+                        {/* Read Status (only for current user's messages) */}
+                        {isCurrentUser && (
+                            <div className="flex items-center gap-1 ml-2">
+                                {isReadByOther ? (
+                                    <CheckCheck className="w-3 h-3 text-blue-200" />
+                                ) : (
+                                    <Clock className="w-3 h-3 text-blue-300" />
+                                )}
+                                <span className="text-blue-200">
+                                    {isReadByOther ? 'Read' : 'Sent'}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
+
+
+'use client';
+
+import { useRef } from 'react';
+import Link from 'next/link';
+import { MessageCircle, Clock, User, ArrowRight } from 'lucide-react';
+import {
+    isChatAvailable,
+    getExchangeStatusInfo,
+    formatMessageTimestamp,
+    getUnreadMessageCount
+} from '@/utils/exchangeChatHelpers';
+
+export default function ExchangeListItem({ exchange, currentUser, unreadCount = 0 }) {
+    // Cache computed values in refs to avoid recalculation
+    const statusInfoRef = useRef(getExchangeStatusInfo(exchange.status));
+    const chatAvailableRef = useRef(isChatAvailable(exchange.status));
+    const userRoleRef = useRef(
+        exchange.initiator.supabaseId === currentUser?.id ? 'initiator' : 'recipient'
+    );
+    const otherParticipantRef = useRef(
+        userRoleRef.current === 'initiator' ? exchange.recipient : exchange.initiator
+    );
+
+    return (
+        <Link
+            href={`/exchange/${exchange._id}`}
+            className="block bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 transition-all duration-200 hover:shadow-md"
+        >
+            <div className="p-6">
+                {/* Header */}
+                <div className="flex items-start justify-between mb-4">
+                    <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                            <div className={`w-3 h-3 rounded-full ${chatAvailableRef.current ? 'bg-green-500' : 'bg-gray-400'
+                                }`}></div>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                                Exchange #{exchange.exchangeId}
+                            </h3>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusInfoRef.current.bgColor} ${statusInfoRef.current.color}`}>
+                                {exchange.status}
+                            </span>
+                        </div>
+
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {exchange.exchangeType.replace('_', ' for ')}
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {/* Unread Message Badge */}
+                        {unreadCount > 0 && (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs">
+                                <MessageCircle className="w-3 h-3" />
+                                <span>{unreadCount}</span>
+                            </div>
+                        )}
+
+                        <ArrowRight className="w-5 h-5 text-gray-400" />
+                    </div>
+                </div>
+
+                {/* Participants */}
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                            <User className="w-4 h-4 text-gray-500" />
+                            <span className="text-sm text-gray-600 dark:text-gray-400">
+                                You ({userRoleRef.current})
+                            </span>
+                        </div>
+                        <span className="text-gray-400">↔</span>
+                        <div className="flex items-center gap-2">
+                            <User className="w-4 h-4 text-gray-500" />
+                            <span className="text-sm text-gray-600 dark:text-gray-400">
+                                {otherParticipantRef.current.userId?.name || 'Other Party'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Status Message */}
+                <div className={`p-3 rounded-lg ${statusInfoRef.current.bgColor} border ${statusInfoRef.current.borderColor}`}>
+                    <p className={`text-sm ${statusInfoRef.current.color}`}>
+                        {statusInfoRef.current.message}
+                    </p>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                        <Clock className="w-4 h-4" />
+                        <span>Updated {formatMessageTimestamp(exchange.updatedAt, false)}</span>
+                    </div>
+
+                    {chatAvailableRef.current && (
+                        <div className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400">
+                            <MessageCircle className="w-4 h-4" />
+                            <span>Chat Available</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </Link>
+    );
+}
+
+
+
+
+
+
+
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { MessageCircle, Users, Clock, AlertTriangle } from 'lucide-react';
+import ChatInterface from './ChatInterface';
+import { useUser } from '@/hooks/use-user';
+import {
+    isChatAvailable,
+    getExchangeStatusInfo,
+    validateChatAccess,
+    getExchangeTimeline
+} from '@/utils/exchangeChatHelpers';
+
+export default function ExchangeWithChat({ exchangeId, exchangeData = null }) {
+    // Core state (minimal useState)
+    const [exchange, setExchange] = useState(exchangeData);
+    const [loading, setLoading] = useState(!exchangeData);
+    const [error, setError] = useState(null);
+    const [showChat, setShowChat] = useState(false);
+
+    // Refs for non-rendering values
+    const chatAccessRef = useRef(null);
+    const timelineRef = useRef(null);
+    const statusInfoRef = useRef(null);
+
+    // User data
+    const { user } = useUser();
+
+    // Fetch exchange data if not provided
+    const fetchExchangeData = async () => {
+        if (exchangeData) return; // Skip if data already provided
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            const response = await fetch(`/api/exchanges/${exchangeId}`);
+            const data = await response.json();
+
+            if (data.success) {
+                setExchange(data.exchange);
+            } else {
+                setError(data.error || 'Failed to load exchange');
+            }
+        } catch (err) {
+            console.error('Error fetching exchange:', err);
+            setError('Failed to load exchange data');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Calculate derived values (cached in refs)
+    useEffect(() => {
+        if (exchange && user) {
+            // Validate chat access
+            chatAccessRef.current = validateChatAccess(exchange, user.id);
+
+            // Get timeline info
+            timelineRef.current = getExchangeTimeline(exchange);
+
+            // Get status info
+            statusInfoRef.current = getExchangeStatusInfo(exchange.status);
+        }
+    }, [exchange, user]);
+
+    // Load data on mount
+    useEffect(() => {
+        fetchExchangeData();
+    }, [exchangeId]);
+
+    // Loading state
+    if (loading) {
+        return (
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="animate-pulse">
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-4"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                </div>
+            </div>
+        );
+    }
+
+    // Error state
+    if (error || !exchange) {
+        return (
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="text-center">
+                    <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                        Unable to Load Exchange
+                    </h3>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+                    <button
+                        onClick={fetchExchangeData}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                    >
+                        Try Again
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // Get cached values
+    const chatAccess = chatAccessRef.current;
+    const timeline = timelineRef.current;
+    const statusInfo = statusInfoRef.current;
+
+    return (
+        <div className="space-y-6">
+            {/* Exchange Status Header */}
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${isChatAvailable(exchange.status) ? 'bg-green-500' : 'bg-gray-400'
+                            }`}></div>
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                            Exchange Communication
+                        </h2>
+                    </div>
+
+                    {timeline?.daysRemaining && (
+                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${timeline.isExpiringSoon
+                                ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'
+                            }`}>
+                            <Clock className="w-4 h-4" />
+                            <span>{timeline.daysRemaining} days remaining</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Status Message */}
+                {statusInfo && (
+                    <div className={`p-4 rounded-lg border ${statusInfo.bgColor} ${statusInfo.borderColor}`}>
+                        <p className={`text-sm font-medium ${statusInfo.color}`}>
+                            {statusInfo.message}
+                        </p>
+                    </div>
+                )}
+
+                {/* Participants Info */}
+                <div className="mt-4 flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <Users className="w-5 h-5 text-gray-500" />
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                            You are the {chatAccess?.userRole || 'participant'}
+                        </span>
+                    </div>
+
+                    {isChatAvailable(exchange.status) && (
+                        <button
+                            onClick={() => setShowChat(!showChat)}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+                        >
+                            <MessageCircle className="w-4 h-4" />
+                            {showChat ? 'Hide Chat' : 'Open Chat'}
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Chat Interface */}
+            {showChat && chatAccess?.canAccess && (
+                <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div className="border-b border-gray-200 dark:border-gray-700 p-4">
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            Exchange Chat
+                        </h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            Communicate with the other party about this exchange
+                        </p>
+                    </div>
+
+                    <div className="p-4">
+                        <ChatInterface
+                            exchangeId={exchangeId}
+                            currentUser={user}
+                            exchangeStatus={exchange.status}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Chat Unavailable Message */}
+            {showChat && !chatAccess?.canAccess && (
+                <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <div className="text-center">
+                        <MessageCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                            Chat Unavailable
+                        </h3>
+                        <p className="text-gray-600 dark:text-gray-400">
+                            {chatAccess?.reason || 'Chat is not available for this exchange'}
+                        </p>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+
+
+
+
+
+
+// api/exchanges
+
+import connectDB from '@/lib/mongodb';
+import Exchange from '@/models/Exchange';
+import User from '@/models/User';
+import Message from '@/models/Message';
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+
+// GET: Check existing exchanges between current user and skill owner
+export async function GET(request) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { searchParams } = new URL(request.url);
+        const skillId = searchParams.get('skillId');
+        const otherUserId = searchParams.get('otherUserId');
+
+        // Validate required parameters
+        if (!skillId || !otherUserId) {
+            return NextResponse.json(
+                { success: false, error: 'Missing skillId or otherUserId' },
+                { status: 400 }
+            );
+        }
+
+        // Use authenticated user's ID
+        const currentUserSupabaseId = user.id;
+
+        // Find exchanges where current user and other user are involved with the specific skill
+        const exchanges = await Exchange.find({
+            $or: [
+                {
+                    // Current user is initiator, other user is recipient, skill matches
+                    $and: [
+                        { 'initiator.supabaseId': currentUserSupabaseId },
+                        { 'recipient.supabaseId': otherUserId },
+                        {
+                            $or: [
+                                { 'recipientOffer.skillId': skillId },
+                                { 'initiatorOffer.skillId': skillId }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    // Current user is recipient, other user is initiator, skill matches
+                    $and: [
+                        { 'recipient.supabaseId': currentUserSupabaseId },
+                        { 'initiator.supabaseId': otherUserId },
+                        {
+                            $or: [
+                                { 'recipientOffer.skillId': skillId },
+                                { 'initiatorOffer.skillId': skillId }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        })
+            .populate('initiator.userId', 'name email')
+            .populate('recipient.userId', 'name email')
+            .sort({ createdAt: -1 })
+            .limit(10); // Limit to recent exchanges
+
+        return NextResponse.json({
+            success: true,
+            exchanges,
+            count: exchanges.length
+        });
+
+    } catch (error) {
+        console.error('Error checking existing exchanges:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to check existing exchanges' },
+            { status: 500 }
+        );
+    }
+}
+
+// POST: Create a new exchange
+export async function POST(request) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const data = await request.json();
+
+        // Extract and validate required fields (removed initiatorSupabaseId since we get it from auth)
+        const {
+            recipientSkillId,
+            recipientUserId,
+            recipientSupabaseId,
+            exchangeType,
+            initiatorOffer,
+            recipientOffer
+        } = data;
+
+        // Use authenticated user as initiator
+        const initiatorSupabaseId = user.id;
+
+        // Validate required fields
+        if (!recipientSkillId || !recipientUserId || !recipientSupabaseId || !exchangeType || !initiatorOffer || !recipientOffer) {
+            return NextResponse.json(
+                { success: false, error: 'Missing required fields' },
+                { status: 400 }
+            );
+        }
+
+        // Validate exchangeType
+        const validExchangeTypes = ['skill_for_skill', 'skill_for_money', 'money_for_skill'];
+        if (!validExchangeTypes.includes(exchangeType)) {
+            return NextResponse.json(
+                { success: false, error: 'Invalid exchangeType' },
+                { status: 400 }
+            );
+        }
+
+        // Prevent self-exchange
+        if (initiatorSupabaseId === recipientSupabaseId) {
+            return NextResponse.json(
+                { success: false, error: 'Cannot create exchange with yourself' },
+                { status: 400 }
+            );
+        }
+
+        // Find initiator user document
+        const initiatorUser = await User.findOne({ supabaseId: initiatorSupabaseId });
+        if (!initiatorUser) {
+            return NextResponse.json(
+                { success: false, error: 'User account not found. Please complete profile setup.' },
+                { status: 404 }
+            );
+        }
+
+        // Check for existing active exchanges between these users for this skill
+        const existingExchange = await Exchange.findOne({
+            $or: [
+                {
+                    $and: [
+                        { 'initiator.supabaseId': initiatorSupabaseId },
+                        { 'recipient.supabaseId': recipientSupabaseId },
+                        { 'recipientOffer.skillId': recipientSkillId },
+                        { status: { $in: ['pending', 'negotiating', 'accepted', 'in_progress'] } }
+                    ]
+                },
+                {
+                    $and: [
+                        { 'initiator.supabaseId': recipientSupabaseId },
+                        { 'recipient.supabaseId': initiatorSupabaseId },
+                        { 'initiatorOffer.skillId': recipientSkillId },
+                        { status: { $in: ['pending', 'negotiating', 'accepted', 'in_progress'] } }
+                    ]
+                }
+            ]
+        });
+
+        if (existingExchange) {
+            return NextResponse.json(
+                { success: false, error: 'Active exchange already exists between these users for this skill' },
+                { status: 409 }
+            );
+        }
+
+        // Create new exchange document
+        const newExchange = new Exchange({
+            initiator: {
+                userId: initiatorUser._id,
+                supabaseId: initiatorSupabaseId
+            },
+            recipient: {
+                userId: recipientUserId,
+                supabaseId: recipientSupabaseId
+            },
+            exchangeType,
+            initiatorOffer: {
+                ...initiatorOffer,
+                type: initiatorOffer.type || 'skill'
+            },
+            recipientOffer: {
+                ...recipientOffer,
+                skillId: recipientSkillId,
+                type: recipientOffer.type || 'skill'
+            },
+            status: 'pending'
+        });
+
+        const savedExchange = await newExchange.save();
+
+        // Populate the saved exchange for response
+        await savedExchange.populate('initiator.userId', 'name email');
+        await savedExchange.populate('recipient.userId', 'name email');
+
+        // Create initial system message for the exchange
+        try {
+            await Message.create({
+                exchangeId: savedExchange._id,
+                type: 'system',
+                systemData: {
+                    event: 'exchange_created',
+                    details: {
+                        exchangeType: savedExchange.exchangeType,
+                        initiator: initiatorSupabaseId,
+                        recipient: recipientSupabaseId
+                    }
+                }
+            });
+        } catch (msgError) {
+            console.error('Error creating initial message:', msgError);
+            // Continue even if message creation fails
+        }
+
+        return NextResponse.json({
+            success: true,
+            exchange: savedExchange,
+            message: 'Exchange created successfully'
+        });
+
+    } catch (error) {
+        console.error('Error creating exchange:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to create exchange' },
+            { status: 500 }
+        );
+    }
+}
+
+
+
+
+
+
+// api/exchanges/[id]
+
+import connectDB from '@/lib/mongodb';
+import Exchange from '@/models/Exchange';
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+
+// GET: Get single exchange by ID
+export async function GET(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id } = await params;
+
+        const exchange = await Exchange.findById(id)
+            .populate('initiator.userId', 'name email')
+            .populate('recipient.userId', 'name email');
+
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if user is a participant in this exchange
+        const isParticipant =
+            exchange.initiator.supabaseId === user.id ||
+            exchange.recipient.supabaseId === user.id;
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to access this exchange' },
+                { status: 403 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            exchange
+        });
+
+    } catch (error) {
+        console.error('Error fetching exchange:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to fetch exchange' },
+            { status: 500 }
+        );
+    }
+}
+
+// PATCH: Update exchange status or offers
+export async function PATCH(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id } = await params;
+        const updateData = await request.json();
+
+        // First, get the exchange to check permissions
+        const existingExchange = await Exchange.findById(id);
+
+        if (!existingExchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if user is a participant in this exchange
+        const isInitiator = existingExchange.initiator.supabaseId === user.id;
+        const isRecipient = existingExchange.recipient.supabaseId === user.id;
+        const isParticipant = isInitiator || isRecipient;
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to modify this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Additional validation for specific update operations
+        if (updateData.initiatorOffer && !isInitiator) {
+            return NextResponse.json(
+                { success: false, error: 'Only the initiator can update their offer' },
+                { status: 403 }
+            );
+        }
+
+        if (updateData.recipientOffer && !isRecipient) {
+            return NextResponse.json(
+                { success: false, error: 'Only the recipient can update their offer' },
+                { status: 403 }
+            );
+        }
+
+        // Validate status changes (both participants can change status in most cases)
+        if (updateData.status) {
+            const validStatusTransitions = {
+                'pending': ['negotiating', 'cancelled'],
+                'negotiating': ['accepted', 'cancelled'],
+                'accepted': ['in_progress', 'cancelled'],
+                'in_progress': ['completed', 'cancelled'],
+                'completed': [], // Final state
+                'cancelled': [], // Final state
+                'expired': [] // Final state
+            };
+
+            const currentStatus = existingExchange.status;
+            const newStatus = updateData.status;
+
+            if (!validStatusTransitions[currentStatus]?.includes(newStatus)) {
+                return NextResponse.json(
+                    { success: false, error: `Cannot change status from ${currentStatus} to ${newStatus}` },
+                    { status: 400 }
+                );
+            }
+        }
+
+        // Add updatedAt timestamp
+        updateData.updatedAt = new Date();
+
+        // Update the exchange
+        const exchange = await Exchange.findByIdAndUpdate(
+            id,
+            updateData,
+            { new: true, runValidators: true }
+        )
+            .populate('initiator.userId', 'name email')
+            .populate('recipient.userId', 'name email');
+
+        return NextResponse.json({
+            success: true,
+            exchange,
+            message: 'Exchange updated successfully'
+        });
+
+    } catch (error) {
+        console.error('Error updating exchange:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to update exchange' },
+            { status: 500 }
+        );
+    }
+}
+
+
+
+
+// api/exchanges/[id]/chat-status
+
+import connectDB from '@/lib/mongodb';
+import Exchange from '@/models/Exchange';
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+
+// Helper function to check if chat is available for exchange status
+const isChatAvailable = (status) => {
+    return ['negotiating', 'accepted', 'in_progress'].includes(status);
+};
+
+// Helper function to get chat status message
+const getChatStatusMessage = (status) => {
+    const messages = {
+        'pending': 'Chat will be available once negotiation begins',
+        'negotiating': 'Chat is active - you can communicate with the other party',
+        'accepted': 'Chat is active - coordinate your exchange details',
+        'in_progress': 'Chat is active - track progress and communicate',
+        'completed': 'Exchange completed - chat is now closed',
+        'cancelled': 'Exchange cancelled - chat is no longer available',
+        'expired': 'Exchange expired - chat is no longer available'
+    };
+
+    return messages[status] || 'Chat status unknown';
+};
+
+// GET: Check if chat is available for exchange
+export async function GET(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id: exchangeId } = await params;
+        const userSupabaseId = user.id; // Use authenticated user ID
+
+        // Find exchange
+        const exchange = await Exchange.findById(exchangeId)
+            .populate('initiator.userId', 'name email')
+            .populate('recipient.userId', 'name email');
+
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if user is a participant
+        const isInitiator = exchange.initiator.supabaseId === userSupabaseId;
+        const isRecipient = exchange.recipient.supabaseId === userSupabaseId;
+        const isParticipant = isInitiator || isRecipient;
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to access this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Determine user's role and other participant info
+        const userRole = isInitiator ? 'initiator' : 'recipient';
+        const otherParticipant = isInitiator ? exchange.recipient : exchange.initiator;
+
+        // Check chat availability
+        const chatAvailable = isChatAvailable(exchange.status);
+        const statusMessage = getChatStatusMessage(exchange.status);
+
+        // Calculate exchange timeline info
+        const now = new Date();
+        const timeRemaining = exchange.expiresAt ? Math.max(0, exchange.expiresAt.getTime() - now.getTime()) : null;
+        const daysRemaining = timeRemaining ? Math.ceil(timeRemaining / (1000 * 60 * 60 * 24)) : null;
+
+        return NextResponse.json({
+            success: true,
+            chatStatus: {
+                available: chatAvailable,
+                message: statusMessage,
+                canSendMessages: chatAvailable && isParticipant
+            },
+            exchangeInfo: {
+                id: exchange._id,
+                exchangeId: exchange.exchangeId,
+                status: exchange.status,
+                type: exchange.exchangeType,
+                createdAt: exchange.createdAt,
+                expiresAt: exchange.expiresAt,
+                daysRemaining: daysRemaining
+            },
+            userInfo: {
+                role: userRole,
+                isInitiator: isInitiator,
+                isRecipient: isRecipient
+            },
+            participants: {
+                initiator: {
+                    name: exchange.initiator.userId?.name || 'Unknown',
+                    email: exchange.initiator.userId?.email || 'Unknown',
+                    supabaseId: exchange.initiator.supabaseId,
+                    isCurrentUser: isInitiator
+                },
+                recipient: {
+                    name: exchange.recipient.userId?.name || 'Unknown',
+                    email: exchange.recipient.userId?.email || 'Unknown',
+                    supabaseId: exchange.recipient.supabaseId,
+                    isCurrentUser: isRecipient
+                },
+                otherParty: {
+                    name: otherParticipant.userId?.name || 'Unknown',
+                    role: isInitiator ? 'recipient' : 'initiator',
+                    supabaseId: otherParticipant.supabaseId
+                }
+            },
+            offers: {
+                initiator: exchange.initiatorOffer,
+                recipient: exchange.recipientOffer
+            }
+        });
+
+    } catch (error) {
+        console.error('Error checking exchange chat status:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to check chat status' },
+            { status: 500 }
+        );
+    }
+}
+
+
+
+
+
+// api/exchanges/[id]/mark-read
+
+import connectDB from '@/lib/mongodb';
+import Message from '@/models/Message';
+import Exchange from '@/models/Exchange';
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+
+// Helper function to check if chat is available for exchange status
+const isChatAvailable = (status) => {
+    return ['negotiating', 'accepted', 'in_progress'].includes(status);
+};
+
+// PATCH: Mark messages as read by current user
+export async function PATCH(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id: exchangeId } = await params;
+        const userSupabaseId = user.id; // Use authenticated user ID
+
+        // Validate exchange exists
+        const exchange = await Exchange.findById(exchangeId);
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if user is a participant in this exchange
+        const isInitiator = exchange.initiator.supabaseId === userSupabaseId;
+        const isRecipient = exchange.recipient.supabaseId === userSupabaseId;
+        const isParticipant = isInitiator || isRecipient;
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to access this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Determine user's role
+        const userRole = isInitiator ? 'initiator' : 'recipient';
+
+        // Find all unread messages for this user in this exchange
+        const unreadMessages = await Message.find({
+            exchangeId,
+            'readBy.supabaseId': { $ne: userSupabaseId }
+        }).select('_id readBy');
+
+        if (unreadMessages.length === 0) {
+            return NextResponse.json({
+                success: true,
+                message: 'No unread messages to mark',
+                markedCount: 0,
+                exchangeInfo: {
+                    status: exchange.status,
+                    chatAvailable: isChatAvailable(exchange.status)
+                }
+            });
+        }
+
+        // Batch update: Mark all unread messages as read
+        const updateResult = await Message.updateMany(
+            {
+                exchangeId,
+                'readBy.supabaseId': { $ne: userSupabaseId }
+            },
+            {
+                $push: {
+                    readBy: {
+                        supabaseId: userSupabaseId,
+                        role: userRole,
+                        readAt: new Date()
+                    }
+                }
+            }
+        );
+
+        // Get total unread count for this exchange (for other user)
+        const remainingUnreadCount = await Message.countDocuments({
+            exchangeId,
+            'readBy.supabaseId': { $ne: userSupabaseId }
+        });
+
+        return NextResponse.json({
+            success: true,
+            message: 'Messages marked as read successfully',
+            markedCount: updateResult.modifiedCount,
+            totalUnreadRemaining: remainingUnreadCount,
+            exchangeInfo: {
+                status: exchange.status,
+                chatAvailable: isChatAvailable(exchange.status)
+            },
+            userInfo: {
+                role: userRole,
+                supabaseId: userSupabaseId
+            }
+        });
+
+    } catch (error) {
+        console.error('Error marking messages as read:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to mark messages as read' },
+            { status: 500 }
+        );
+    }
+}
+
+// GET: Get unread message count for current user
+export async function GET(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id: exchangeId } = await params;
+        const userSupabaseId = user.id; // Use authenticated user ID
+
+        // Validate exchange exists
+        const exchange = await Exchange.findById(exchangeId);
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if user is a participant
+        const isParticipant = [
+            exchange.initiator.supabaseId,
+            exchange.recipient.supabaseId
+        ].includes(userSupabaseId);
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to access this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Count unread messages for this user
+        const unreadCount = await Message.countDocuments({
+            exchangeId,
+            'readBy.supabaseId': { $ne: userSupabaseId }
+        });
+
+        // Get total message count for context
+        const totalMessages = await Message.countDocuments({ exchangeId });
+
+        return NextResponse.json({
+            success: true,
+            unreadCount,
+            totalMessages,
+            hasUnread: unreadCount > 0,
+            exchangeInfo: {
+                status: exchange.status,
+                chatAvailable: isChatAvailable(exchange.status)
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting unread count:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to get unread count' },
+            { status: 500 }
+        );
+    }
+}
+
+
+
+
+
+
+// api/exchanges/[id]/messages
+
+import connectDB from '@/lib/mongodb';
+import Message from '@/models/Message';
+import Exchange from '@/models/Exchange';
+import User from '@/models/User';
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+
+// Helper function to check if chat is available for exchange status
+const isChatAvailable = (status) => {
+    return ['negotiating', 'accepted', 'in_progress'].includes(status);
+};
+
+// GET: Fetch messages for specific exchange
+export async function GET(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id: exchangeId } = await params;
+        const { searchParams } = new URL(request.url);
+        const page = parseInt(searchParams.get('page')) || 1;
+        const limit = parseInt(searchParams.get('limit')) || 50;
+
+        // Validate exchange exists
+        const exchange = await Exchange.findById(exchangeId);
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if chat is available for current exchange status
+        if (!isChatAvailable(exchange.status)) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: `Chat not available. Exchange status: ${exchange.status}`,
+                    chatAvailable: false
+                },
+                { status: 403 }
+            );
+        }
+
+        // Check if user is a participant
+        const isParticipant = [
+            exchange.initiator.supabaseId,
+            exchange.recipient.supabaseId
+        ].includes(user.id);
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to access this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Fetch messages with pagination (newest first, then reverse)
+        const messages = await Message.find({ exchangeId })
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .skip((page - 1) * limit)
+            .populate('sender.userId', 'name email');
+
+        // Calculate if there are more messages
+        const totalMessages = await Message.countDocuments({ exchangeId });
+        const hasMore = (page * limit) < totalMessages;
+
+        return NextResponse.json({
+            success: true,
+            messages: messages.reverse(), // Return oldest first for chat display
+            pagination: {
+                page,
+                limit,
+                total: totalMessages,
+                hasMore
+            },
+            exchangeInfo: {
+                status: exchange.status,
+                chatAvailable: true
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching exchange messages:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to fetch messages' },
+            { status: 500 }
+        );
+    }
+}
+
+// POST: Send new message in exchange
+export async function POST(request, { params }) {
+    try {
+        await connectDB();
+
+        // Authenticate user
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: 'Authentication required' },
+                { status: 401 }
+            );
+        }
+
+        const { id: exchangeId } = await params;
+        const { content } = await request.json();
+
+        // Use authenticated user as sender
+        const senderSupabaseId = user.id;
+
+        // Validate input
+        if (!content || !content.trim()) {
+            return NextResponse.json(
+                { success: false, error: 'Message content is required' },
+                { status: 400 }
+            );
+        }
+
+        // Validate exchange exists
+        const exchange = await Exchange.findById(exchangeId);
+        if (!exchange) {
+            return NextResponse.json(
+                { success: false, error: 'Exchange not found' },
+                { status: 404 }
+            );
+        }
+
+        // Check if chat is available
+        if (!isChatAvailable(exchange.status)) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: `Chat not available. Exchange status: ${exchange.status}`,
+                    chatAvailable: false
+                },
+                { status: 403 }
+            );
+        }
+
+        // Check if sender is a participant in this exchange
+        const isParticipant = [
+            exchange.initiator.supabaseId,
+            exchange.recipient.supabaseId
+        ].includes(senderSupabaseId);
+
+        if (!isParticipant) {
+            return NextResponse.json(
+                { success: false, error: 'Not authorized to send messages in this exchange' },
+                { status: 403 }
+            );
+        }
+
+        // Find sender's User document
+        const senderUser = await User.findOne({ supabaseId: senderSupabaseId }).select('_id');
+        if (!senderUser) {
+            return NextResponse.json(
+                { success: false, error: 'Sender user not found' },
+                { status: 404 }
+            );
+        }
+
+        // Determine sender's role in the exchange
+        const senderRole = exchange.initiator.supabaseId === senderSupabaseId
+            ? 'initiator'
+            : 'recipient';
+
+        // Create and save new message
+        const newMessage = new Message({
+            exchangeId,
+            content: content.trim(),
+            sender: {
+                userId: senderUser._id,
+                supabaseId: senderSupabaseId,
+                role: senderRole
+            },
+            type: 'user'
+        });
+
+        const savedMessage = await newMessage.save();
+
+        // Populate sender info for response
+        await savedMessage.populate('sender.userId', 'name email');
+
+        return NextResponse.json({
+            success: true,
+            message: savedMessage,
+            exchangeInfo: {
+                status: exchange.status,
+                chatAvailable: true
+            }
+        });
+
+    } catch (error) {
+        console.error('Error sending exchange message:', error);
+        return NextResponse.json(
+            { success: false, error: 'Failed to send message' },
+            { status: 500 }
+        );
+    }
+}
+
+
+
