@@ -1,3 +1,4 @@
+// app/skill/[id]/page.js
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -5,6 +6,7 @@ import { ArrowLeft, User } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import SkillDetailsCard from '@/components/skills/SkillDetailsCard';
 import UserProfileCard from '@/components/skills/UserProfileCard';
+import ImageCarousel from '@/components/skills/ImageCarousel';
 
 export default function SkillDetailPage({ params }) {
     const { id } = React.use(params);
@@ -120,12 +122,11 @@ export default function SkillDetailPage({ params }) {
                 {/* BACK BUTTON */}
                 <button
                     onClick={() => window.history.back()}
-                    className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-6"
+                    className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-8"
                 >
                     <ArrowLeft className="w-5 h-5" />
                     <span className="font-medium">Back to Browse</span>
                 </button>
-
                 {/* MAIN CONTENT GRID */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     <SkillDetailsCard skillData={skillData} />

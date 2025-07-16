@@ -1,3 +1,5 @@
+// app/api/user/sync/route.js
+
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import connectDB from '@/lib/mongodb';
@@ -28,12 +30,12 @@ export async function POST(req) {
         let mongoUser = await User.findOne({ supabaseId: user.id });
 
         if (!mongoUser) {
-            // Create new user in MongoDB
+            // NEW USER: Create with Supabase data as initial values
             mongoUser = await User.create({
                 supabaseId: user.id,
                 email: user.email,
                 name: user.user_metadata?.full_name || user.email.split('@')[0],
-                avatar: user.user_metadata?.avatar_url,
+                avatar: user.user_metadata?.avatar_url || '',
                 bio: '',
                 location: '',
                 preferences: {
@@ -56,27 +58,39 @@ export async function POST(req) {
                     successfulExchanges: 0,
                 },
                 lastActive: new Date(),
+                // Track whether profile fields have been manually edited
+                profileEditedFields: {
+                    name: false,
+                    avatar: false,
+                    bio: false,
+                    location: false
+                }
             });
         } else {
-            // Update existing user
+            // EXISTING USER: Only sync essential auth data, preserve profile edits
             const updateData = {
                 lastActive: new Date(),
             };
 
-            // Sync data from Supabase if changed
-            if (user.user_metadata?.full_name && user.user_metadata.full_name !== mongoUser.name) {
-                updateData.name = user.user_metadata.full_name;
-            }
-
-            if (user.user_metadata?.avatar_url && user.user_metadata.avatar_url !== mongoUser.avatar) {
-                updateData.avatar = user.user_metadata.avatar_url;
-            }
-
+            // ONLY sync email (auth-critical data)
             if (user.email && user.email !== mongoUser.email) {
                 updateData.email = user.email;
             }
 
-            // Initialize missing fields for existing users
+            // CONDITIONALLY sync name and avatar ONLY if user hasn't edited them
+            if (!mongoUser.profileEditedFields?.name &&
+                user.user_metadata?.full_name &&
+                user.user_metadata.full_name !== mongoUser.name) {
+                updateData.name = user.user_metadata.full_name;
+            }
+
+            if (!mongoUser.profileEditedFields?.avatar &&
+                user.user_metadata?.avatar_url &&
+                user.user_metadata.avatar_url !== mongoUser.avatar) {
+                updateData.avatar = user.user_metadata.avatar_url;
+            }
+
+            // Initialize missing fields for existing users (one-time migration)
             if (!mongoUser.preferences) {
                 updateData.preferences = {
                     notifications: {
@@ -102,6 +116,16 @@ export async function POST(req) {
                 };
             }
 
+            // Initialize profileEditedFields for existing users
+            if (!mongoUser.profileEditedFields) {
+                updateData.profileEditedFields = {
+                    name: false,
+                    avatar: false,
+                    bio: false,
+                    location: false
+                };
+            }
+
             mongoUser = await User.findByIdAndUpdate(
                 mongoUser._id,
                 updateData,
@@ -122,6 +146,7 @@ export async function POST(req) {
             reviewCount: mongoUser.reviewCount,
             isActive: mongoUser.isActive,
             stats: mongoUser.stats,
+            preferences: mongoUser.preferences,
             createdAt: mongoUser.createdAt,
             lastActive: mongoUser.lastActive,
         };

@@ -1,8 +1,10 @@
 'use client';
 
 import { ArrowRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 const HeroSection = () => {
+    const router = useRouter();
 
     return (
         <section className="relative min-h-[40vh] bg-white dark:bg-gray-900 flex items-center justify-center pt-16 pb-8">
@@ -29,7 +31,9 @@ const HeroSection = () => {
 
                     {/* CTA Buttons */}
                     <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
-                        <button className="group cursor-pointer bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center">
+                        <button
+                        onClick={() => router.push('/browse')}
+                         className="group cursor-pointer bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center">
                             Start Trading Skills
                             <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                         </button>

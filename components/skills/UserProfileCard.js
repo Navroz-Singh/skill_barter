@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Star, CheckCircle, Handshake, MessageCircle, ArrowRightLeft, Loader2, User } from 'lucide-react';
+import ExchangeRequestModal from '@/components/modals/ExchangeRequestModal';
 
 export default function UserProfileCard({ skillData, currentUser }) {
     const router = useRouter();
@@ -11,6 +12,8 @@ export default function UserProfileCard({ skillData, currentUser }) {
     const [loading, setLoading] = useState(false);
     const [existingExchange, setExistingExchange] = useState(null);
     const [checkingExchange, setCheckingExchange] = useState(false);
+    const [showExchangeModal, setShowExchangeModal] = useState(false); // NEW: Modal state
+    const [SkillOwner, setSkillOwner] = useState(null);
 
     // Derived flags – always up-to-date on every render
     const isOwnSkill = currentUser?.id === skillData.ownerSupabaseId;
@@ -27,7 +30,10 @@ export default function UserProfileCard({ skillData, currentUser }) {
 
         try {
             const response = await fetch(
-                `/api/exchanges?skillId=${skillData._id}&otherUserId=${skillData.ownerSupabaseId}`
+                `/api/exchanges?skillId=${skillData._id}&otherUserId=${skillData.ownerSupabaseId}`,
+                {
+                    cache: 'no-store'
+                }
             );
             const data = await response.json();
 
@@ -37,7 +43,7 @@ export default function UserProfileCard({ skillData, currentUser }) {
                     ['pending', 'negotiating', 'accepted', 'in_progress'].includes(ex.status)
                 );
                 setExistingExchange(activeExchange || null);
-            }else{
+            } else {
                 console.log('No existing exchanges found');
             }
         } catch (error) {
@@ -47,8 +53,8 @@ export default function UserProfileCard({ skillData, currentUser }) {
         }
     };
 
-    // Create new exchange
-    const startExchange = async () => {
+    // UPDATED: Create new exchange with selected type from modal
+    const startExchange = async (exchangeType) => {
         if (!canInitiateExchange || loading) return;
 
         setLoading(true);
@@ -60,10 +66,12 @@ export default function UserProfileCard({ skillData, currentUser }) {
                     recipientSkillId: skillData._id,
                     recipientUserId: skillData.owner._id,
                     recipientSupabaseId: skillData.ownerSupabaseId,
-                    exchangeType: 'skill_for_skill', // Default type
+                    exchangeType, // Use selected type from modal
                     initiatorOffer: {
-                        type: 'skill',
-                        description: `Interested in exchanging skills for "${skillData.title}"`,
+                        type: exchangeType === 'skill_for_money' ? 'money' : 'skill',
+                        description: exchangeType === 'skill_for_money'
+                            ? `Interested in paying for "${skillData.title}"`
+                            : `Interested in exchanging skills for "${skillData.title}"`,
                         deliveryMethod: 'Both'
                     },
                     recipientOffer: {
@@ -72,13 +80,14 @@ export default function UserProfileCard({ skillData, currentUser }) {
                         description: skillData.description,
                         deliveryMethod: skillData.deliveryMethod || 'Both'
                     }
-                })
+                }),
+                cache: 'no-store'
             });
 
             const data = await response.json();
 
             if (data.success) {
-                // Navigate to the new exchange
+                setShowExchangeModal(false); // Close modal
                 router.push(`/exchange/${data.exchange._id}`);
             } else {
                 alert(data.error || 'Failed to create exchange');
@@ -91,6 +100,22 @@ export default function UserProfileCard({ skillData, currentUser }) {
         }
     };
 
+    const fetchSkillOwner = async (params) => {
+        const response = await fetch(`/api/user/${skillData.ownerSupabaseId}`)
+        const data = await response.json();
+        setSkillOwner(data.user);
+    }
+
+    const ratingArray = [];
+    for(let i = 1; i <= skillData.owner.rating; i++) {
+        ratingArray.push(i);
+    }
+
+    // NEW: Handle start exchange button click (shows modal)
+    const handleStartExchange = () => {
+        setShowExchangeModal(true);
+    };
+
     // Navigate to existing exchange
     const goToExistingExchange = () => {
         if (existingExchange) {
@@ -100,7 +125,8 @@ export default function UserProfileCard({ skillData, currentUser }) {
 
     // View user profile
     const viewProfile = () => {
-        router.push(`/profile/${skillData.ownerSupabaseId}`);
+        // console.log(skillData);
+        router.push(`/view-profile/${skillData.owner?._id}`);
     };
 
     // Check for existing exchanges once the user is known and exchange is allowed
@@ -108,6 +134,7 @@ export default function UserProfileCard({ skillData, currentUser }) {
         if (canInitiateExchange) {
             checkExistingExchange();
         }
+        fetchSkillOwner()
     }, [canInitiateExchange]);
 
     return (
@@ -116,38 +143,43 @@ export default function UserProfileCard({ skillData, currentUser }) {
             <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700 sticky top-4">
                 <div className="text-center mb-6">
                     <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                        <span className="text-2xl font-bold text-white">
-                            {skillData.owner?.name?.[0] || skillData.owner?.firstName?.[0] || 'U'}
-                        </span>
+                        {skillData.owner.avatar ? (
+                            <img
+                                src={skillData.owner.avatar}
+                                alt="Profile"
+                                className="w-full h-full rounded-full object-cover"
+                            />
+                        ) : (
+                            skillData.owner.name?.[0]?.toUpperCase() || skillData.owner.email?.[0]?.toUpperCase() || 'U'
+                        )}
                     </div>
 
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-1">
                         {skillData.owner?.name || skillData.owner?.firstName || 'Anonymous'}
                     </h3>
-
                     <p className="text-gray-600 dark:text-gray-400 text-sm mb-2">
                         Skill Provider
                     </p>
 
                     <div className="flex items-center justify-center gap-1 mb-4">
-                        {[1, 2, 3, 4, 5].map((star) => (
+                        {ratingArray.map((star) => (
                             <Star
                                 key={star}
                                 className="w-4 h-4 fill-yellow-400 text-yellow-400"
                             />
                         ))}
-                        <span className="text-sm text-gray-600 dark:text-gray-400 ml-2">4.8 (24 reviews)</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400 ml-2">{skillData.owner.rating ? skillData.owner.rating.toFixed(1) : '0.0'} ({skillData.owner.reviewCount || 0} reviews)</span>
                     </div>
                 </div>
 
                 {/* USER STATS */}
                 <div className="grid grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
                     <div className="text-center">
-                        <div className="text-lg font-bold text-gray-900 dark:text-white">12</div>
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">{SkillOwner?.stats?.totalSkills}</div>
                         <div className="text-sm text-gray-600 dark:text-gray-400">Total Skills</div>
                     </div>
                     <div className="text-center">
-                        <div className="text-lg font-bold text-gray-900 dark:text-white">8</div>
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">{SkillOwner?.stats?.successfulExchanges}</div>
                         <div className="text-sm text-gray-600 dark:text-gray-400">Exchanges</div>
                     </div>
                 </div>
@@ -181,16 +213,16 @@ export default function UserProfileCard({ skillData, currentUser }) {
                             Continue Exchange
                         </button>
                     ) : (
-                        // Default: Start or Checking/Starting
+                        // UPDATED: Default - Show modal on click
                         <button
-                            onClick={startExchange}
+                            onClick={handleStartExchange}
                             disabled={loading || checkingExchange}
                             className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:shadow-none flex items-center justify-center gap-2"
                         >
-                            {loading || checkingExchange ? (
+                            {checkingExchange ? (
                                 <>
                                     <Loader2 className="w-4 h-4 animate-spin" />
-                                    {checkingExchange ? 'Checking...' : 'Starting Exchange...'}
+                                    Checking...
                                 </>
                             ) : (
                                 <>
@@ -240,6 +272,15 @@ export default function UserProfileCard({ skillData, currentUser }) {
                     </div>
                 </div>
             </div>
+
+            {/* NEW: Exchange Request Modal */}
+            <ExchangeRequestModal
+                isOpen={showExchangeModal}
+                onClose={() => setShowExchangeModal(false)}
+                onSubmit={startExchange}
+                skillData={skillData}
+                loading={loading}
+            />
         </div>
     );
 }

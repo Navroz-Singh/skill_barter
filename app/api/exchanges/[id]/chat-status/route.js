@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 
 // Helper function to check if chat is available for exchange status
 const isChatAvailable = (status) => {
-    return ['negotiating', 'accepted', 'in_progress'].includes(status);
+    return ['negotiating', 'pending_acceptance', 'accepted', 'in_progress'].includes(status);
 };
 
 // Helper function to get chat status message
@@ -15,6 +15,7 @@ const getChatStatusMessage = (status) => {
     const messages = {
         'pending': 'Chat will be available once negotiation begins',
         'negotiating': 'Chat is active - you can communicate with the other party',
+        'pending_acceptance': 'Chat is active - waiting for final acceptance from both parties',
         'accepted': 'Chat is active - coordinate your exchange details',
         'in_progress': 'Chat is active - track progress and communicate',
         'completed': 'Exchange completed - chat is now closed',

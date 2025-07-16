@@ -2,9 +2,11 @@
 
 import { ArrowRight, Shield } from 'lucide-react';
 import { useUser } from '@/hooks/use-user';
+import { useRouter } from 'next/navigation';
 
 const CTASection = () => {
     const { user } = useUser();
+    const router = useRouter();
     return (
         <section className="relative bg-white dark:bg-gray-900 pt-8 pb-8">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -25,8 +27,10 @@ const CTASection = () => {
 
                         {/* CTA Buttons */}
                         <div className="flex flex-col sm:flex-row gap-4 justify-center mb-5">
-                            <button className="group cursor-pointer bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-10 py-4 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center">
-                                {user ? "Start Trading Skills" : "Sign Up Free"}
+                            <button
+                            onClick={() => router.push('/my-skills')}
+                             className="group cursor-pointer bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-10 py-4 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center">
+                                {user ? "Add Your Skills" : "Sign Up Free"}
                                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                             </button>
 

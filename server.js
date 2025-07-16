@@ -1,3 +1,5 @@
+// server.js
+
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import next from 'next';
@@ -13,35 +15,6 @@ const port = 3000;
 // Prepare the Next.js app
 const app = next({ dev, hostname, port });
 const handler = app.getRequestHandler();
-
-// NEW Step 10: Message sequence tracking per exchange
-const exchangeSequences = new Map(); // exchangeId -> current sequence number
-
-// NEW Step 10: Get next sequence number for exchange
-const getNextSequence = (exchangeId) => {
-    const current = exchangeSequences.get(exchangeId) || 0;
-    const next = current + 1;
-    exchangeSequences.set(exchangeId, next);
-    return next;
-};
-
-// NEW Step 10: Initialize sequence for exchange
-const initializeSequence = async (exchangeId) => {
-    if (!exchangeSequences.has(exchangeId)) {
-        try {
-            // Get the highest sequence number from existing messages
-            const lastMessage = await Message.findOne({ exchangeId })
-                .sort({ sequence: -1 })
-                .select('sequence');
-
-            const lastSequence = lastMessage?.sequence || 0;
-            exchangeSequences.set(exchangeId, lastSequence);
-        } catch (error) {
-            console.error('Error initializing sequence:', error);
-            exchangeSequences.set(exchangeId, 0);
-        }
-    }
-};
 
 app.prepare().then(() => {
     // Create HTTP server
@@ -61,21 +34,20 @@ app.prepare().then(() => {
     io.on('connection', (socket) => {
         console.log('User connected:', socket.id);
 
-        // Join exchange chat room
+        // Join exchange room (single room for chat + negotiation)
         socket.on('join-exchange-chat', async (data) => {
             const { exchangeId, userSupabaseId } = data;
 
             try {
                 await connectDB();
 
-                // Verify exchange exists and user is participant
+                // Find exchange and validate participant
                 const exchange = await Exchange.findById(exchangeId);
                 if (!exchange) {
                     socket.emit('chat-error', { message: 'Exchange not found' });
                     return;
                 }
 
-                // Check if user is participant
                 const isParticipant =
                     exchange.initiator.supabaseId === userSupabaseId ||
                     exchange.recipient.supabaseId === userSupabaseId;
@@ -85,17 +57,14 @@ app.prepare().then(() => {
                     return;
                 }
 
-                // Check if chat is available for current exchange status
-                const chatAvailableStatuses = ['negotiating', 'accepted', 'in_progress'];
+                // UPDATED: Check if chat is available for current status (includes pending_acceptance)
+                const chatAvailableStatuses = ['negotiating', 'pending_acceptance', 'accepted', 'in_progress'];
                 if (!chatAvailableStatuses.includes(exchange.status)) {
                     socket.emit('chat-error', {
                         message: `Chat not available. Exchange status: ${exchange.status}`
                     });
                     return;
                 }
-
-                // NEW Step 10: Initialize sequence tracking for this exchange
-                await initializeSequence(exchangeId);
 
                 // Leave any previous rooms
                 socket.rooms.forEach(room => {
@@ -104,22 +73,15 @@ app.prepare().then(() => {
                     }
                 });
 
-                // Join exchange chat room
+                // Join single room for both chat and negotiation
                 const roomName = `exchange-${exchangeId}`;
                 socket.join(roomName);
 
-                // Store user context
+                // Store user data on socket
                 socket.userSupabaseId = userSupabaseId;
                 socket.currentExchangeId = exchangeId;
                 socket.currentRoom = roomName;
                 socket.userRole = exchange.initiator.supabaseId === userSupabaseId ? 'initiator' : 'recipient';
-
-                // Notify other participant
-                socket.to(roomName).emit('user-joined-exchange', {
-                    userSupabaseId,
-                    userRole: socket.userRole,
-                    timestamp: new Date().toISOString()
-                });
 
                 console.log(`User ${userSupabaseId} (${socket.userRole}) joined exchange ${exchangeId}`);
 
@@ -129,11 +91,10 @@ app.prepare().then(() => {
             }
         });
 
-        // ENHANCED Step 10: Handle exchange messages with sequence numbering
+        // Send chat message (simple timestamp-based ordering)
         socket.on('send-exchange-message', async (messageData) => {
-            const { exchangeId, content, messageId, clientSequence } = messageData;
+            const { exchangeId, content, messageId } = messageData;
 
-            // Validation
             if (!exchangeId || !content || !socket.userSupabaseId) {
                 socket.emit('chat-error', { message: 'Invalid message data' });
                 return;
@@ -142,24 +103,21 @@ app.prepare().then(() => {
             try {
                 await connectDB();
 
-                // Verify exchange status still allows chat
+                // UPDATED: Verify exchange is still available for chat (includes pending_acceptance)
                 const exchange = await Exchange.findById(exchangeId);
-                if (!exchange || !['negotiating', 'accepted', 'in_progress'].includes(exchange.status)) {
+                if (!exchange || !['negotiating', 'pending_acceptance', 'accepted', 'in_progress'].includes(exchange.status)) {
                     socket.emit('chat-error', { message: 'Chat no longer available for this exchange' });
                     return;
                 }
 
-                // Get user info
+                // Find user
                 const user = await User.findOne({ supabaseId: socket.userSupabaseId }).select('_id');
                 if (!user) {
                     socket.emit('chat-error', { message: 'User not found' });
                     return;
                 }
 
-                // NEW Step 10: Get server sequence number for message ordering
-                const serverSequence = getNextSequence(exchangeId);
-
-                // Create message with sequence numbers
+                // Create and save message (no sequence - just timestamp ordering)
                 const newMessage = new Message({
                     exchangeId,
                     content: content.trim(),
@@ -168,15 +126,12 @@ app.prepare().then(() => {
                         supabaseId: socket.userSupabaseId,
                         role: socket.userRole
                     },
-                    type: 'user',
-                    sequence: serverSequence, // NEW: Server-side sequence for ordering
-                    clientSequence: clientSequence || null // NEW: Client-side sequence for tracking
+                    type: 'user'
                 });
 
                 const savedMessage = await newMessage.save();
 
-                // ENHANCED Step 10: Broadcast with sequence information
-                const roomName = `exchange-${exchangeId}`;
+                // Broadcast message to all users in room
                 const messagePayload = {
                     _id: savedMessage._id,
                     messageId: savedMessage._id,
@@ -185,134 +140,89 @@ app.prepare().then(() => {
                     timestamp: savedMessage.createdAt,
                     createdAt: savedMessage.createdAt,
                     type: savedMessage.type,
-                    sequence: savedMessage.sequence, // NEW: Include sequence for ordering
-                    clientSequence: savedMessage.clientSequence,
                     readBy: savedMessage.readBy || []
                 };
 
-                io.to(roomName).emit('new-exchange-message', messagePayload);
+                io.to(socket.currentRoom).emit('new-exchange-message', messagePayload);
 
-                // ENHANCED: Send delivery confirmation with sequence info
+                // Send delivery confirmation to sender
                 if (messageId) {
                     socket.emit('message-delivered', {
                         messageId: savedMessage._id,
                         tempId: messageId,
-                        sequence: savedMessage.sequence, // NEW: Include sequence
                         timestamp: savedMessage.createdAt
                     });
                 }
 
-                console.log(`Message sent in exchange ${exchangeId} with sequence ${serverSequence}`);
+                console.log(`Message sent in exchange ${exchangeId}`);
 
             } catch (error) {
                 console.error('Error sending exchange message:', error);
-                socket.emit('message-error', {
-                    error: 'Failed to send message',
-                    messageId: messageData.messageId,
-                    clientSequence: messageData.clientSequence // NEW: Include for error tracking
-                });
+                socket.emit('chat-error', { message: 'Failed to send message' });
             }
         });
 
-        // ENHANCED Step 10: Handle offer updates with sequence tracking
-        socket.on('offer-updated', async (data) => {
+        // Handle real-time offer updates
+        socket.on('offer-updated', (data) => {
             const { exchangeId, offerType, newOffer } = data;
 
-            try {
-                await connectDB();
-
-                // NEW Step 10: Get sequence for system message
-                const serverSequence = getNextSequence(exchangeId);
-
-                // Create system message for offer update with sequence
-                const systemMessage = await Message.create({
+            if (socket.currentRoom) {
+                // Broadcast offer update to negotiation playground
+                socket.to(socket.currentRoom).emit('offer-updated-realtime', {
                     exchangeId,
-                    type: 'offer_update',
-                    sequence: serverSequence, // NEW: Sequence for system messages too
-                    systemData: {
-                        event: 'offer_updated',
-                        details: {
-                            offerType,
-                            newOffer,
-                            triggeredBy: socket.userSupabaseId
-                        }
-                    }
+                    offerType,
+                    newOffer,
+                    userSupabaseId: socket.userSupabaseId,
+                    timestamp: new Date().toISOString()
                 });
 
-                // Broadcast offer update with sequence
-                const roomName = `exchange-${exchangeId}`;
-                io.to(roomName).emit('offer-system-message', {
-                    _id: systemMessage._id,
-                    messageId: systemMessage._id,
-                    systemData: systemMessage.systemData,
-                    timestamp: systemMessage.createdAt,
-                    createdAt: systemMessage.createdAt,
-                    type: 'offer_update',
-                    sequence: systemMessage.sequence // NEW: Include sequence
-                });
-
-            } catch (error) {
-                console.error('Error creating offer update message:', error);
+                console.log(`Offer updated in exchange ${exchangeId} by ${socket.userSupabaseId}`);
             }
         });
 
-        // ENHANCED: Heartbeat handling with connection quality
-        socket.on('heartbeat', () => {
-            const responseTime = Date.now();
-            socket.emit('heartbeat-response', {
-                timestamp: responseTime,
-                status: 'connected'
-            });
+        // NEW: Handle user acceptance events
+        socket.on('user-accepted', (data) => {
+            const { exchangeId, userSupabaseId, newStatus, acceptanceData, message } = data;
+
+            if (socket.currentRoom) {
+                // Broadcast acceptance to other participants
+                socket.to(socket.currentRoom).emit('user-accepted-exchange', {
+                    exchangeId,
+                    userSupabaseId,
+                    newStatus,
+                    acceptanceData,
+                    message,
+                    timestamp: new Date().toISOString()
+                });
+
+                console.log(`User ${userSupabaseId} accepted exchange ${exchangeId}. New status: ${newStatus}`);
+            }
         });
 
-        // ENHANCED Step 10: Handle exchange status changes with sequence
-        socket.on('status-changed', async (data) => {
-            const { exchangeId, newStatus, previousStatus } = data;
+        // UPDATED: Handle exchange status changes (includes acceptance data)
+        socket.on('status-changed', (data) => {
+            const { exchangeId, newStatus, previousStatus, acceptanceData } = data;
 
-            try {
-                await connectDB();
-
-                // NEW Step 10: Get sequence for system message
-                const serverSequence = getNextSequence(exchangeId);
-
-                // Create system message for status change with sequence
-                const systemMessage = await Message.create({
+            if (socket.currentRoom) {
+                // Broadcast status change with acceptance data
+                socket.to(socket.currentRoom).emit('status-changed-realtime', {
                     exchangeId,
-                    type: 'status_change',
-                    sequence: serverSequence, // NEW: Sequence for system messages
-                    systemData: {
-                        event: 'status_changed',
-                        details: {
-                            previousStatus,
-                            newStatus,
-                            triggeredBy: socket.userSupabaseId
-                        }
-                    }
+                    newStatus,
+                    previousStatus,
+                    acceptanceData, // NEW: Include acceptance data
+                    timestamp: new Date().toISOString()
                 });
 
-                // Broadcast status change with sequence
-                const roomName = `exchange-${exchangeId}`;
-                io.to(roomName).emit('status-system-message', {
-                    _id: systemMessage._id,
-                    messageId: systemMessage._id,
-                    systemData: systemMessage.systemData,
-                    timestamp: systemMessage.createdAt,
-                    createdAt: systemMessage.createdAt,
-                    type: 'status_change',
-                    sequence: systemMessage.sequence // NEW: Include sequence
-                });
-
-                // If status change makes chat unavailable, notify users
+                // Close chat if exchange reaches terminal status
                 const chatUnavailableStatuses = ['completed', 'cancelled', 'expired'];
                 if (chatUnavailableStatuses.includes(newStatus)) {
-                    io.to(roomName).emit('chat-closed', {
+                    io.to(socket.currentRoom).emit('chat-closed', {
                         reason: `Exchange ${newStatus}`,
                         timestamp: new Date().toISOString()
                     });
                 }
 
-            } catch (error) {
-                console.error('Error creating status change message:', error);
+                console.log(`Exchange ${exchangeId} status changed from ${previousStatus} to ${newStatus}`);
             }
         });
 
@@ -337,81 +247,23 @@ app.prepare().then(() => {
             }
         });
 
-        // Handle leaving exchange chat
+        // Leave exchange room
         socket.on('leave-exchange-chat', () => {
             if (socket.currentRoom && socket.userSupabaseId) {
-                console.log(`User ${socket.userSupabaseId} leaving ${socket.currentExchangeId}`);
-
-                socket.to(socket.currentRoom).emit('user-left-exchange', {
-                    userSupabaseId: socket.userSupabaseId,
-                    userRole: socket.userRole,
-                    timestamp: new Date().toISOString()
-                });
-
+                console.log(`User ${socket.userSupabaseId} leaving exchange ${socket.currentExchangeId}`);
                 socket.leave(socket.currentRoom);
             }
         });
 
-        // ENHANCED: Connection monitoring and error handling
+        // Handle disconnection
         socket.on('disconnect', (reason) => {
             console.log('User disconnected:', socket.id, 'Reason:', reason);
-
-            if (socket.currentRoom && socket.userSupabaseId) {
-                socket.to(socket.currentRoom).emit('user-disconnected', {
-                    userSupabaseId: socket.userSupabaseId,
-                    userRole: socket.userRole,
-                    timestamp: new Date().toISOString(),
-                    reason: reason
-                });
-            }
         });
 
-        // ENHANCED: Handle connection errors
+        // Basic error handling
         socket.on('error', (error) => {
             console.error('Socket error for user:', socket.userSupabaseId, error);
-            socket.emit('connection-error', {
-                message: 'Connection error occurred',
-                timestamp: new Date().toISOString()
-            });
-        });
-
-        // ENHANCED: Connection quality monitoring
-        socket.on('connection-check', () => {
-            socket.emit('connection-status', {
-                status: 'connected',
-                latency: Date.now(),
-                timestamp: new Date().toISOString()
-            });
-        });
-
-        // NEW Step 10: Message sync support for conflict resolution
-        socket.on('request-message-sync', async (data) => {
-            const { exchangeId, lastSequence } = data;
-
-            try {
-                await connectDB();
-
-                // Get messages after the last known sequence
-                const newMessages = await Message.find({
-                    exchangeId,
-                    sequence: { $gt: lastSequence || 0 }
-                })
-                    .sort({ sequence: 1 })
-                    .populate('sender.userId', 'name email')
-                    .limit(50); // Limit to prevent overwhelming
-
-                socket.emit('message-sync-response', {
-                    exchangeId,
-                    messages: newMessages,
-                    latestSequence: exchangeSequences.get(exchangeId) || 0
-                });
-
-            } catch (error) {
-                console.error('Error syncing messages:', error);
-                socket.emit('message-sync-error', {
-                    error: 'Failed to sync messages'
-                });
-            }
+            socket.emit('chat-error', { message: 'Connection error occurred' });
         });
     });
 
@@ -419,6 +271,6 @@ app.prepare().then(() => {
     httpServer.listen(port, (err) => {
         if (err) throw err;
         console.log(`> Ready on http://${hostname}:${port}`);
-        console.log('> Socket.IO server running with exchange chat support');
+        console.log('> Socket.IO server running with simplified exchange chat and two-step acceptance');
     });
 });

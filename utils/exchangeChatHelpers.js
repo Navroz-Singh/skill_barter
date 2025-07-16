@@ -1,8 +1,10 @@
-// Chat availability status constants
-export const CHAT_AVAILABLE_STATUSES = ['negotiating', 'accepted', 'in_progress'];
+// utils/exchangeChatHelpers.js
+
+// Chat availability status constants (UPDATED)
+export const CHAT_AVAILABLE_STATUSES = ['negotiating', 'pending_acceptance', 'accepted', 'in_progress'];
 export const CHAT_UNAVAILABLE_STATUSES = ['pending', 'completed', 'cancelled', 'expired'];
 
-// Exchange status messages
+// Exchange status messages (UPDATED with pending_acceptance)
 export const EXCHANGE_STATUS_MESSAGES = {
     'pending': {
         message: 'Chat will be available once negotiation begins',
@@ -15,6 +17,12 @@ export const EXCHANGE_STATUS_MESSAGES = {
         color: 'text-blue-600 dark:text-blue-400',
         bgColor: 'bg-blue-50 dark:bg-blue-900/20',
         borderColor: 'border-blue-200 dark:border-blue-800'
+    },
+    'pending_acceptance': {
+        message: 'Chat is active - waiting for final acceptance from both parties',
+        color: 'text-orange-600 dark:text-orange-400',
+        bgColor: 'bg-orange-50 dark:bg-orange-900/20',
+        borderColor: 'border-orange-200 dark:border-orange-800'
     },
     'accepted': {
         message: 'Chat is active - coordinate your exchange',
@@ -72,6 +80,117 @@ export const getExchangeStatusInfo = (status) => {
 };
 
 /**
+ * NEW: Check if user can accept the exchange
+ * @param {object} exchange - Exchange object
+ * @param {string} userSupabaseId - User's Supabase ID
+ * @returns {object} - Acceptance status and capabilities
+ */
+export const getUserAcceptanceStatus = (exchange, userSupabaseId) => {
+    if (!exchange || !userSupabaseId) {
+        return {
+            canAccept: false,
+            hasAccepted: false,
+            reason: 'Invalid exchange or user'
+        };
+    }
+
+    const isInitiator = exchange.initiator?.supabaseId === userSupabaseId;
+    const isRecipient = exchange.recipient?.supabaseId === userSupabaseId;
+    
+    if (!isInitiator && !isRecipient) {
+        return {
+            canAccept: false,
+            hasAccepted: false,
+            reason: 'Not a participant in this exchange'
+        };
+    }
+
+    // Check if status allows acceptance
+    if (!['negotiating', 'pending_acceptance'].includes(exchange.status)) {
+        return {
+            canAccept: false,
+            hasAccepted: false,
+            reason: `Cannot accept in current status: ${exchange.status}`
+        };
+    }
+
+    const hasUserAccepted = isInitiator 
+        ? exchange.acceptance?.initiatorAccepted 
+        : exchange.acceptance?.recipientAccepted;
+
+    const otherUserAccepted = isInitiator 
+        ? exchange.acceptance?.recipientAccepted 
+        : exchange.acceptance?.initiatorAccepted;
+
+    const bothAccepted = exchange.acceptance?.initiatorAccepted && exchange.acceptance?.recipientAccepted;
+
+    return {
+        canAccept: !hasUserAccepted && ['negotiating', 'pending_acceptance'].includes(exchange.status),
+        hasAccepted: hasUserAccepted || false,
+        otherUserAccepted: otherUserAccepted || false,
+        bothAccepted: bothAccepted || false,
+        userRole: isInitiator ? 'initiator' : 'recipient',
+        status: exchange.status
+    };
+};
+
+/**
+ * NEW: Get acceptance status message for UI display
+ * @param {object} exchange - Exchange object
+ * @param {string} userSupabaseId - User's Supabase ID
+ * @returns {object} - Message and styling for acceptance status
+ */
+export const getAcceptanceStatusMessage = (exchange, userSupabaseId) => {
+    const acceptanceStatus = getUserAcceptanceStatus(exchange, userSupabaseId);
+    
+    if (!acceptanceStatus.canAccept && !acceptanceStatus.hasAccepted) {
+        return {
+            message: acceptanceStatus.reason,
+            color: 'text-gray-600 dark:text-gray-400',
+            bgColor: 'bg-gray-50 dark:bg-gray-900/20'
+        };
+    }
+
+    if (acceptanceStatus.bothAccepted) {
+        return {
+            message: 'Both parties have accepted this exchange',
+            color: 'text-green-600 dark:text-green-400',
+            bgColor: 'bg-green-50 dark:bg-green-900/20'
+        };
+    }
+
+    if (acceptanceStatus.hasAccepted && !acceptanceStatus.otherUserAccepted) {
+        return {
+            message: 'You have accepted. Waiting for other party to accept.',
+            color: 'text-orange-600 dark:text-orange-400',
+            bgColor: 'bg-orange-50 dark:bg-orange-900/20'
+        };
+    }
+
+    if (!acceptanceStatus.hasAccepted && acceptanceStatus.otherUserAccepted) {
+        return {
+            message: 'Other party has accepted. Your acceptance is needed.',
+            color: 'text-blue-600 dark:text-blue-400',
+            bgColor: 'bg-blue-50 dark:bg-blue-900/20'
+        };
+    }
+
+    if (acceptanceStatus.canAccept) {
+        return {
+            message: 'Ready for acceptance by both parties',
+            color: 'text-blue-600 dark:text-blue-400',
+            bgColor: 'bg-blue-50 dark:bg-blue-900/20'
+        };
+    }
+
+    return {
+        message: 'Acceptance status unknown',
+        color: 'text-gray-600 dark:text-gray-400',
+        bgColor: 'bg-gray-50 dark:bg-gray-900/20'
+    };
+};
+
+/**
  * Validate if user can access exchange chat
  * @param {object} exchange - Exchange object
  * @param {string} userSupabaseId - User's Supabase ID
@@ -81,8 +200,7 @@ export const validateChatAccess = (exchange, userSupabaseId) => {
     if (!exchange) {
         return {
             canAccess: false,
-            reason: 'Exchange not found',
-            code: 'EXCHANGE_NOT_FOUND'
+            reason: 'Exchange not found'
         };
     }
 
@@ -94,8 +212,7 @@ export const validateChatAccess = (exchange, userSupabaseId) => {
     if (!isParticipant) {
         return {
             canAccess: false,
-            reason: 'You are not a participant in this exchange',
-            code: 'NOT_PARTICIPANT'
+            reason: 'You are not a participant in this exchange'
         };
     }
 
@@ -107,7 +224,6 @@ export const validateChatAccess = (exchange, userSupabaseId) => {
         return {
             canAccess: false,
             reason: statusInfo.message,
-            code: 'CHAT_UNAVAILABLE',
             status: exchange.status,
             userRole: isInitiator ? 'initiator' : 'recipient'
         };
@@ -151,12 +267,11 @@ export const getExchangeTimeline = (exchange) => {
     const daysSinceCreation = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
 
     // Time remaining
-    let timeRemaining = null;
     let daysRemaining = null;
     let isExpiringSoon = false;
 
     if (expiresAt && expiresAt > now) {
-        timeRemaining = expiresAt.getTime() - now.getTime();
+        const timeRemaining = expiresAt.getTime() - now.getTime();
         daysRemaining = Math.ceil(timeRemaining / (1000 * 60 * 60 * 24));
         isExpiringSoon = daysRemaining <= 3; // Expiring in 3 days or less
     }
@@ -164,7 +279,6 @@ export const getExchangeTimeline = (exchange) => {
     return {
         daysSinceCreation,
         daysRemaining,
-        timeRemaining,
         isExpiringSoon,
         isExpired: expiresAt && expiresAt <= now,
         createdAt,
@@ -252,66 +366,12 @@ export const validateMessageContent = (content) => {
 };
 
 /**
- * Generate system message content based on event type
- * @param {string} eventType - Type of system event
- * @param {object} eventData - Event data
- * @returns {object} - System message content and styling
- */
-export const generateSystemMessageContent = (eventType, eventData) => {
-    switch (eventType) {
-        case 'offer_updated':
-            return {
-                text: `${eventData.offerType === 'initiator' ? 'Initiator' : 'Recipient'} updated their offer`,
-                icon: 'ArrowRightLeft',
-                color: 'text-blue-600 dark:text-blue-400'
-            };
-        case 'status_changed':
-            return {
-                text: `Exchange status changed to "${eventData.newStatus}"`,
-                icon: 'AlertCircle',
-                color: 'text-green-600 dark:text-green-400'
-            };
-        case 'exchange_created':
-            return {
-                text: 'Exchange conversation started',
-                icon: 'MessageCircle',
-                color: 'text-gray-600 dark:text-gray-400'
-            };
-        case 'deadline_warning':
-            return {
-                text: `Exchange expires in ${eventData.daysRemaining} days`,
-                icon: 'Clock',
-                color: 'text-orange-600 dark:text-orange-400'
-            };
-        default:
-            return {
-                text: 'System notification',
-                icon: 'Bell',
-                color: 'text-gray-600 dark:text-gray-400'
-            };
-    }
-};
-
-// NEW Step 10: Message Synchronization & Ordering Utilities
-
-/**
- * Sort messages by sequence number and timestamp for consistent ordering
+ * Sort messages by timestamp (simple ordering)
  * @param {array} messages - Array of messages
  * @returns {array} - Sorted messages array
  */
-export const sortMessagesBySequence = (messages) => {
+export const sortMessagesByTimestamp = (messages) => {
     return [...messages].sort((a, b) => {
-        // First priority: server sequence number
-        if (a.sequence && b.sequence) {
-            return a.sequence - b.sequence;
-        }
-
-        // Second priority: client sequence for local ordering
-        if (a.clientSequence && b.clientSequence) {
-            return a.clientSequence - b.clientSequence;
-        }
-
-        // Fallback: timestamp-based ordering
         const timeA = new Date(a.createdAt || a.timestamp).getTime();
         const timeB = new Date(b.createdAt || b.timestamp).getTime();
         return timeA - timeB;
@@ -319,184 +379,21 @@ export const sortMessagesBySequence = (messages) => {
 };
 
 /**
- * Enhanced duplicate detection with multiple strategies
+ * Simple duplicate detection by message ID
  * @param {object} newMessage - New message to check
  * @param {array} existingMessages - Array of existing messages
- * @param {Set} messageHistory - Set of known message IDs
  * @returns {boolean} - Whether message is a duplicate
  */
-export const isDuplicateMessage = (newMessage, existingMessages = [], messageHistory = new Set()) => {
-    // Strategy 1: Check by message ID
-    if (newMessage._id && messageHistory.has(newMessage._id)) {
-        return true;
-    }
-
-    // Strategy 2: Check by sequence number (server-assigned)
-    if (newMessage.sequence) {
-        const existingWithSameSequence = existingMessages.find(msg =>
-            msg.sequence === newMessage.sequence
-        );
-        if (existingWithSameSequence) {
-            return true;
-        }
-    }
-
-    // Strategy 3: Check by content and sender within time window
-    const timeWindow = 5000; // 5 seconds
-    const newTime = new Date(newMessage.createdAt || newMessage.timestamp).getTime();
-
-    return existingMessages.some(existing =>
-        existing.sender?.supabaseId === newMessage.sender?.supabaseId &&
-        existing.content === newMessage.content &&
-        Math.abs(new Date(existing.createdAt || existing.timestamp).getTime() - newTime) < timeWindow
-    );
+export const isDuplicateMessage = (newMessage, existingMessages = []) => {
+    if (!newMessage._id) return false;
+    
+    return existingMessages.some(existing => existing._id === newMessage._id);
 };
 
 /**
- * Reconcile local and server messages after reconnection
- * @param {array} localMessages - Messages from local state
- * @param {array} serverMessages - Messages from server
- * @param {Set} messageHistory - Set of known message IDs
- * @returns {object} - Reconciliation result
+ * Generate temporary message ID for optimistic updates
+ * @returns {string} - Temporary message ID
  */
-export const reconcileMessageLists = (localMessages, serverMessages, messageHistory = new Set()) => {
-    // Create maps for efficient lookup
-    const serverMap = new Map(serverMessages.map(msg => [msg._id, msg]));
-    const localMap = new Map(localMessages.map(msg => [msg._id, msg]));
-
-    // Find different types of messages
-    const localOnlyMessages = localMessages.filter(local =>
-        local._id.startsWith('temp-') && !serverMap.has(local._id)
-    );
-
-    const serverOnlyMessages = serverMessages.filter(server =>
-        !messageHistory.has(server._id) && !localMap.has(server._id)
-    );
-
-    const confirmedMessages = localMessages.filter(local =>
-        !local._id.startsWith('temp-') || serverMap.has(local._id)
-    );
-
-    // Messages that failed to send (exist locally but not on server)
-    const failedMessages = localOnlyMessages.filter(msg =>
-        msg.status === 'failed' || msg.status === 'sending'
-    );
-
-    // Merge all confirmed and new messages
-    const reconciledMessages = [
-        ...confirmedMessages,
-        ...serverOnlyMessages
-    ];
-
-    // Sort by sequence/timestamp
-    const sortedMessages = sortMessagesBySequence(reconciledMessages);
-
-    return {
-        messages: sortedMessages,
-        newMessages: serverOnlyMessages,
-        failedMessages: failedMessages,
-        totalCount: sortedMessages.length,
-        needsRetry: failedMessages.length > 0
-    };
-};
-
-/**
- * Create message queue item with priority
- * @param {string} content - Message content
- * @param {string} priority - Priority level (high, normal, low)
- * @param {object} metadata - Additional metadata
- * @returns {object} - Queue item
- */
-export const createQueueItem = (content, priority = 'normal', metadata = {}) => {
-    return {
-        content: content.trim(),
-        priority,
-        timestamp: new Date().toISOString(),
-        retryCount: 0,
-        tempId: `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        ...metadata
-    };
-};
-
-/**
- * Sort message queue by priority and timestamp
- * @param {array} queue - Array of queue items
- * @returns {array} - Sorted queue
- */
-export const sortMessageQueue = (queue) => {
-    const priorityOrder = { high: 0, normal: 1, low: 2 };
-
-    return [...queue].sort((a, b) => {
-        // First by priority
-        const priorityDiff = priorityOrder[a.priority || 'normal'] - priorityOrder[b.priority || 'normal'];
-        if (priorityDiff !== 0) return priorityDiff;
-
-        // Then by timestamp (older first)
-        return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-    });
-};
-
-/**
- * Find conflicts in message sequences
- * @param {array} messages - Array of messages
- * @returns {array} - Array of conflicts found
- */
-export const findSequenceConflicts = (messages) => {
-    const conflicts = [];
-    const sequenceMap = new Map();
-
-    messages.forEach(message => {
-        if (message.sequence) {
-            if (sequenceMap.has(message.sequence)) {
-                conflicts.push({
-                    sequence: message.sequence,
-                    messages: [sequenceMap.get(message.sequence), message],
-                    type: 'duplicate_sequence'
-                });
-            } else {
-                sequenceMap.set(message.sequence, message);
-            }
-        }
-    });
-
-    return conflicts;
-};
-
-/**
- * Get the latest sequence number from messages
- * @param {array} messages - Array of messages
- * @returns {number} - Latest sequence number
- */
-export const getLatestSequence = (messages) => {
-    return messages.reduce((latest, message) => {
-        return Math.max(latest, message.sequence || 0);
-    }, 0);
-};
-
-/**
- * Check if message list needs synchronization
- * @param {array} localMessages - Local messages
- * @param {number} serverSequence - Latest server sequence
- * @returns {boolean} - Whether sync is needed
- */
-export const needsMessageSync = (localMessages, serverSequence) => {
-    const localLatestSequence = getLatestSequence(localMessages);
-    return serverSequence > localLatestSequence;
-};
-
-/**
- * Extract failed messages that need retry
- * @param {array} messages - Array of messages
- * @returns {array} - Messages that need retry
- */
-export const extractFailedMessages = (messages) => {
-    return messages.filter(message =>
-        message.status === 'failed' ||
-        (message.status === 'sending' && message._id.startsWith('temp-'))
-    ).map(message => ({
-        content: message.content,
-        tempId: message._id,
-        priority: 'high',
-        originalTimestamp: message.createdAt || message.timestamp
-    }));
+export const generateTempMessageId = () => {
+    return `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 };

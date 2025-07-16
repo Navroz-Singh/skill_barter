@@ -1,15 +1,20 @@
+// app/api/skills/route.js
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import connectDB from '@/lib/mongodb';
+import connectDB from '@/lib/mongodb'; // ✅ Using your existing connectDB
 import Skill from '@/models/Skill';
 import User from '@/models/User';
+
+// ✅ Import the actual function name from your utils
+// Change this to match your actual function name
+import { updateSkillCategoryStats } from '@/utils/updateSkillCategories';
 
 // Helper function to escape special regex characters
 function escapeRegex(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Handle POST request to create a new skill (keep existing functionality)
+// Handle POST request to create a new skill with image support
 export async function POST(request) {
     try {
         // Get and verify Supabase session
@@ -22,6 +27,7 @@ export async function POST(request) {
                 { status: 401 }
             );
         }
+        
         await connectDB();
 
         // Get request body
@@ -34,7 +40,8 @@ export async function POST(request) {
             tags,
             location,
             deliveryMethod,
-            estimatedDuration
+            estimatedDuration,
+            images // NEW: Extract images from request body
         } = body;
 
         // Validate required fields
@@ -78,8 +85,32 @@ export async function POST(request) {
             ? tags.map(tag => tag.trim()).filter(tag => tag && tag.length <= 30)
             : [];
 
+        // ✅ FIXED: More lenient image processing
+        const processedImages = [];
+        if (images && Array.isArray(images) && images.length > 0) {
+            // Only validate if images are provided
+            if (images.length > 3) {
+                return NextResponse.json(
+                    { error: 'Maximum 3 images allowed per skill' },
+                    { status: 400 }
+                );
+            }
+
+            // Process each image with better error handling
+            for (const image of images) {
+                // More lenient validation
+                if (image && typeof image === 'object' && image.url) {
+                    processedImages.push({
+                        url: image.url,
+                        publicId: image.publicId || '', // Allow empty publicId
+                        alt: image.alt || 'Skill image'
+                    });
+                }
+            }
+        }
+
         // Create new skill object matching your model
-        const newSkill = new Skill({
+        const skillData = {
             title: title.trim(),
             description: description.trim(),
             category: category,
@@ -94,7 +125,14 @@ export async function POST(request) {
             exchangeCount: 0,
             viewCount: 0,
             interestedUsers: []
-        });
+        };
+
+        // ✅ Only add images if they exist
+        if (processedImages.length > 0) {
+            skillData.images = processedImages;
+        }
+
+        const newSkill = new Skill(skillData);
 
         // Save skill to database
         const savedSkill = await newSkill.save();
@@ -114,31 +152,47 @@ export async function POST(request) {
 
         // Populate owner details for response
         await savedSkill.populate('owner', 'name email avatar');
+        
+        // ✅ FIXED: Safely update skill categories with error handling
+        try {
+            await updateSkillCategoryStats(savedSkill.category);
+        } catch (categoryError) {
+            console.warn('Failed to update skill categories:', categoryError);
+            // Don't fail the entire request if category update fails
+        }
+
+        // ✅ FIXED: Build response object safely
+        const responseSkill = {
+            id: savedSkill._id,
+            title: savedSkill.title,
+            description: savedSkill.description,
+            category: savedSkill.category,
+            level: savedSkill.level,
+            tags: savedSkill.tags,
+            location: savedSkill.location,
+            deliveryMethod: savedSkill.deliveryMethod,
+            estimatedDuration: savedSkill.estimatedDuration,
+            isAvailable: savedSkill.isAvailable,
+            exchangeCount: savedSkill.exchangeCount,
+            viewCount: savedSkill.viewCount,
+            createdAt: savedSkill.createdAt,
+            owner: {
+                name: savedSkill.owner.name,
+                email: savedSkill.owner.email,
+                avatar: savedSkill.owner.avatar
+            }
+        };
+
+        // Only include images if they exist
+        if (savedSkill.images && savedSkill.images.length > 0) {
+            responseSkill.images = savedSkill.images;
+        }
 
         return NextResponse.json(
             {
                 success: true,
                 message: 'Skill submitted successfully!',
-                skill: {
-                    id: savedSkill._id,
-                    title: savedSkill.title,
-                    description: savedSkill.description,
-                    category: savedSkill.category,
-                    level: savedSkill.level,
-                    tags: savedSkill.tags,
-                    location: savedSkill.location,
-                    deliveryMethod: savedSkill.deliveryMethod,
-                    estimatedDuration: savedSkill.estimatedDuration,
-                    isAvailable: savedSkill.isAvailable,
-                    exchangeCount: savedSkill.exchangeCount,
-                    viewCount: savedSkill.viewCount,
-                    createdAt: savedSkill.createdAt,
-                    owner: {
-                        name: savedSkill.owner.name,
-                        email: savedSkill.owner.email,
-                        avatar: savedSkill.owner.avatar
-                    }
-                }
+                skill: responseSkill
             },
             { status: 201 }
         );
@@ -170,12 +224,12 @@ export async function POST(request) {
     }
 }
 
-// Handle GET request to fetch skills with CURRENT USER EXCLUSION
+// ✅ UNCHANGED: Keep your existing GET function exactly as it was
 export async function GET(request) {
     try {
         await connectDB();
 
-        // NEW: Get current user to exclude their skills
+        // Get current user to exclude their skills
         let currentUserId = null;
         try {
             const supabase = await createClient();
@@ -188,7 +242,6 @@ export async function GET(request) {
                 }
             }
         } catch (authError) {
-            // Continue without user context if authentication fails
             console.log('No authenticated user, showing all skills');
         }
 
@@ -218,7 +271,7 @@ export async function GET(request) {
         // Build base match query for skills
         let baseQuery = {};
 
-        // NEW: Exclude current user's skills from results
+        // Exclude current user's skills from results
         if (currentUserId) {
             baseQuery.owner = { $ne: currentUserId };
         }
@@ -227,7 +280,7 @@ export async function GET(request) {
         if (isAvailable) {
             baseQuery.isAvailable = isAvailable === 'true';
         } else {
-            baseQuery.isAvailable = true; // Default: only available skills
+            baseQuery.isAvailable = true;
         }
 
         // Category filter
@@ -245,12 +298,12 @@ export async function GET(request) {
             baseQuery.deliveryMethod = deliveryMethod;
         }
 
-        // Location search (case-insensitive partial match)
+        // Location search
         if (location && location.trim()) {
             baseQuery.location = { $regex: location.trim(), $options: 'i' };
         }
 
-        // FIXED TAGS FILTER - EXACT MATCHING ONLY
+        // Tags filter
         if (tags && tags.trim()) {
             const tagsArray = tags.split(',').map(tag => tag.trim()).filter(tag => tag);
             if (tagsArray.length > 0) {
@@ -260,7 +313,7 @@ export async function GET(request) {
             }
         }
 
-        // Text search across title and description ONLY
+        // Text search
         if (search && search.trim()) {
             baseQuery.$or = [
                 { title: { $regex: search.trim(), $options: 'i' } },
@@ -345,12 +398,9 @@ export async function GET(request) {
             }
         }
 
-        // Build aggregation pipeline for all cases (handles owner name search and other requirements)
+        // Build aggregation pipeline
         const pipeline = [
-            // FIRST: Match skills based on all criteria except owner name
             { $match: baseQuery },
-
-            // SECOND: Lookup owner information
             {
                 $lookup: {
                     from: 'users',
@@ -359,8 +409,6 @@ export async function GET(request) {
                     as: 'ownerInfo'
                 }
             },
-
-            // THIRD: Unwind the owner array
             {
                 $unwind: {
                     path: '$ownerInfo',
@@ -369,7 +417,7 @@ export async function GET(request) {
             }
         ];
 
-        // FOURTH: Add owner name filter if provided
+        // Add owner name filter if provided
         if (ownerName && ownerName.trim()) {
             pipeline.push({
                 $match: {
@@ -378,7 +426,7 @@ export async function GET(request) {
             });
         }
 
-        // FIFTH: Add popularity score if needed for sorting
+        // Add popularity score if needed for sorting
         if (sortBy === 'mostPopular') {
             pipeline.push({
                 $addFields: {
@@ -389,7 +437,7 @@ export async function GET(request) {
             });
         }
 
-        // SIXTH: Add sorting
+        // Add sorting
         let sortStage = {};
         switch (sortBy) {
             case 'oldest':
@@ -417,12 +465,10 @@ export async function GET(request) {
         }
 
         pipeline.push({ $sort: sortStage });
-
-        // SEVENTH: Add pagination
         pipeline.push({ $skip: skip });
         pipeline.push({ $limit: limit });
 
-        // EIGHTH: Project the final result structure
+        // Project the final result structure
         pipeline.push({
             $project: {
                 _id: 1,
@@ -431,6 +477,7 @@ export async function GET(request) {
                 category: 1,
                 level: 1,
                 tags: 1,
+                images: 1,
                 location: 1,
                 deliveryMethod: 1,
                 estimatedDuration: 1,
@@ -450,7 +497,7 @@ export async function GET(request) {
         // Execute the main query
         const skills = await Skill.aggregate(pipeline);
 
-        // Get total count with the same filters (without pagination)
+        // Get total count
         const countPipeline = [
             { $match: baseQuery },
             {
@@ -469,7 +516,6 @@ export async function GET(request) {
             }
         ];
 
-        // Add owner name filter for count if provided
         if (ownerName && ownerName.trim()) {
             countPipeline.push({
                 $match: {

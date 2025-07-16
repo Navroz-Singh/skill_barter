@@ -1,3 +1,4 @@
+// middleware.js
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 
@@ -33,8 +34,17 @@ export async function middleware(request) {
 
     const { pathname } = request.nextUrl;
 
+    // Admin routes protection - only check authentication here
+    if (pathname.startsWith('/admin')) {
+        if (!user) {
+            // Redirect to auth page if not logged in
+            return NextResponse.redirect(new URL('/auth', request.url));
+        }
+        // Admin status will be checked in the actual admin pages/APIs
+    }
+
     // Define protected routes (routes that need authentication)
-    const protectedRoutes = ['/dashboard', '/my-skills', '/exchanges', '/profile'];
+    const protectedRoutes = ['/my-skills', '/exchanges', '/profile'];
     const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
     // Define auth routes (routes for login/signup)
@@ -48,7 +58,7 @@ export async function middleware(request) {
 
     // Redirect authenticated users from auth routes to dashboard
     if (isAuthRoute && user) {
-        return NextResponse.redirect(new URL('/dashboard', request.url));
+        return NextResponse.redirect(new URL('/profile', request.url));
     }
 
     return response;

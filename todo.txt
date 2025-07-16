@@ -1,2 +1,2 @@
-1. subscribe to newsletter
-2. featured section in browse page
+1. AI help chatbot
+2. AI based recommendation (eclat or apriori model)

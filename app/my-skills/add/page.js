@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Upload, Image } from 'lucide-react';
 import SkillForm from '@/components/skills/skill-form';
 import { useUser } from '@/hooks/use-user';
 
@@ -22,7 +23,7 @@ export default function AddSkillPage() {
 
         // Redirect to my skills page after 2 seconds
         setTimeout(() => {
-            router.push('/skills/my-skills');
+            router.push('/my-skills');
         }, 2000);
     };
 
@@ -39,12 +40,12 @@ export default function AddSkillPage() {
     }
 
     return (
-        <div className="min-h-screen pt-10 bg-white dark:bg-gray-900">
+        <div className="min-h-screen pt-10 bg-gray-50 dark:bg-gray-900">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {/* Breadcrumb Navigation */}
                 <nav className="mb-6 text-sm">
                     <ol className="flex items-center space-x-2 text-gray-600 dark:text-gray-400">
-                        <li><a href="/skills" className="hover:text-[var(--parrot)] transition-colors duration-200">Skills</a></li>
+                        <li><a href="/my-skills" className="hover:text-gray-900 dark:hover:text-white transition-colors duration-200">My Skills</a></li>
                         <li>/</li>
                         <li className="text-gray-900 dark:text-white">Add Skill</li>
                     </ol>
@@ -55,7 +56,7 @@ export default function AddSkillPage() {
                     <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-4">
                         Add Your Skill
                     </h1>
-                    <p className="text-lg sm:text-xl text-[var(--parrot)] max-w-2xl mx-auto">
+                    <p className="text-lg sm:text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
                         Share your expertise with the community. Whether you're a beginner or expert,
                         your skills can help others learn and grow.
                     </p>
@@ -64,25 +65,28 @@ export default function AddSkillPage() {
                 {/* Success Message */}
                 {successMessage && (
                     <div className="max-w-2xl mx-auto mb-6">
-                        <div className="bg-green-100 dark:bg-green-900 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-300 px-6 py-4 rounded-lg">
+                        <div className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-6 py-4 rounded-lg">
                             <div className="flex items-center gap-3">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
                                 <div>
                                     <span className="block font-medium">{successMessage}</span>
-                                    <span className="block text-sm text-green-600 dark:text-green-400 mt-1">Redirecting to your skills...</span>
+                                    <span className="block text-sm text-gray-600 dark:text-gray-400 mt-1">Redirecting to your skills...</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {/* Skill Form */}
-                <SkillForm onSuccess={handleSkillSuccess} />
+                <div className="max-w-2xl mx-auto">
+
+                    {/* Skill Form */}
+                    <SkillForm onSuccess={handleSkillSuccess} />
+                </div>
 
                 {/* Help Section */}
-                <div className="max-w-2xl mx-auto mt-8 p-6 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+                <div className="max-w-2xl mx-auto mt-8 p-6 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
                     <div className="flex items-start gap-3 mb-4">
                         <div className="flex-shrink-0">
                             <svg className="w-6 h-6 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,6 +109,10 @@ export default function AddSkillPage() {
                                 <li className="flex items-start gap-2">
                                     <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
                                     <span>Add relevant tags to help others find your skill</span>
+                                </li>
+                                <li className="flex items-start gap-2">
+                                    <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
+                                    <span>Upload clear, relevant images to showcase your work</span>
                                 </li>
                                 <li className="flex items-start gap-2">
                                     <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>

@@ -1,9 +1,10 @@
+// components/Navbar.js
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
-import { Bell } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Bell, Shield } from 'lucide-react';
 import Logo from '@/components/ui/logo';
 import ThemeToggleButton from '@/components/ui/ThemeToggleButton';
 import { useUser } from '@/hooks/use-user';
@@ -24,8 +25,36 @@ export default function Navbar() {
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [adminLoading, setAdminLoading] = useState(false);
     const router = useRouter();
     const supabase = createClient();
+
+    // Check admin status when user changes
+    useEffect(() => {
+        const checkAdminStatus = async () => {
+            if (!user) {
+                setIsAdmin(false);
+                return;
+            }
+
+            setAdminLoading(true);
+            try {
+                const response = await fetch('/api/admin/check');
+                if (response.ok) {
+                    const data = await response.json();
+                    setIsAdmin(data.isAdmin);
+                }
+            } catch (error) {
+                console.error('Error checking admin status:', error);
+                setIsAdmin(false);
+            } finally {
+                setAdminLoading(false);
+            }
+        };
+
+        checkAdminStatus();
+    }, [user]);
 
     // Mock notification data - replace with real data from your backend
     const notifications = [
@@ -39,6 +68,7 @@ export default function Navbar() {
     const handleSignOut = async () => {
         await supabase.auth.signOut();
         setIsProfileMenuOpen(false);
+        setIsAdmin(false);
         router.push('/');
     };
 
@@ -83,12 +113,33 @@ export default function Navbar() {
                                     <span
                                         className={`absolute bottom-[-0.5rem] left-0 h-0.5 transition-all duration-300 ease-out ${pathname === route.href
                                             ? 'w-full bg-black dark:bg-white'
-                                            : 'w-0 group-hover:w-full bg-[var(--parrot)]'
+                                            : 'w-0 group-hover:w-full bg-gray-600 dark:bg-gray-400'
                                             }`}
                                     />
                                 </Link>
                             );
                         })}
+
+                        {/* Admin route - only show for admin users */}
+                        {user && isAdmin && !adminLoading && (
+                            <Link
+                                href="/admin"
+                                className={`relative px-3 py-2 text-md font-medium transition-colors duration-200 group flex items-center gap-2 ${pathname.startsWith('/admin')
+                                    ? 'text-blue-600 dark:text-blue-400'
+                                    : 'text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400'
+                                    }`}
+                            >
+                                <Shield className="w-4 h-4" />
+                                <span>Admin</span>
+
+                                <span
+                                    className={`absolute bottom-[-0.5rem] left-0 h-0.5 transition-all duration-300 ease-out ${pathname.startsWith('/admin')
+                                        ? 'w-full bg-blue-600 dark:bg-blue-400'
+                                        : 'w-0 group-hover:w-full bg-blue-500 dark:bg-blue-400'
+                                        }`}
+                                />
+                            </Link>
+                        )}
                     </div>
 
                     {/* Right side - Notifications, Theme toggle and user actions */}
@@ -167,15 +218,21 @@ export default function Navbar() {
                                     className="flex items-center cursor-pointer space-x-2 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 group"
                                     aria-label="User profile menu"
                                 >
-                                    <div className="w-8 h-8 bg-gray-600 dark:bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                                        {user.user_metadata?.avatar_url ? (
+                                    <div className="w-8 h-8 bg-gray-600 dark:bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-sm relative">
+                                        {user.avatar ? (
                                             <img
-                                                src={user.user_metadata.avatar_url}
+                                                src={user.avatar}
                                                 alt="Profile"
                                                 className="w-8 h-8 rounded-full object-cover"
                                             />
                                         ) : (
-                                            user.user_metadata?.full_name?.[0] || user.email[0].toUpperCase()
+                                            user.name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || 'U'
+                                        )}
+                                        {/* Admin badge */}
+                                        {isAdmin && !adminLoading && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border border-white dark:border-gray-900">
+                                                <Shield className="w-2 h-2 text-white absolute inset-0.5" />
+                                            </div>
                                         )}
                                     </div>
 
@@ -192,24 +249,43 @@ export default function Navbar() {
                                 {isProfileMenuOpen && (
                                     <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg py-1 z-50 border border-gray-200 dark:border-gray-700">
                                         <div className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
-                                            <p className="font-medium">{user.user_metadata?.full_name || 'User'}</p>
+                                            <p className="font-medium flex items-center gap-2">
+                                                {user.name || 'User'}
+                                                {isAdmin && !adminLoading && (
+                                                    <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                                                        Admin
+                                                    </span>
+                                                )}
+                                            </p>
                                             <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
                                         </div>
-
-                                        <Link
-                                            href="/dashboard"
-                                            onClick={() => setIsProfileMenuOpen(false)}
-                                            className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
-                                        >
-                                            Dashboard
-                                        </Link>
 
                                         <Link
                                             href="/profile"
                                             onClick={() => setIsProfileMenuOpen(false)}
                                             className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
                                         >
-                                            Profile Settings
+                                            Dashboard
+                                        </Link>
+
+                                        {/* Admin Panel link in dropdown */}
+                                        {isAdmin && !adminLoading && (
+                                            <Link
+                                                href="/admin"
+                                                onClick={() => setIsProfileMenuOpen(false)}
+                                                className="flex items-center gap-2 px-4 py-2 text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
+                                            >
+                                                <Shield className="w-4 h-4" />
+                                                Admin Panel
+                                            </Link>
+                                        )}
+
+                                        <Link
+                                            href="/profile/settings"
+                                            onClick={() => setIsProfileMenuOpen(false)}
+                                            className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
+                                        >
+                                            Settings
                                         </Link>
 
                                         <button
@@ -281,6 +357,21 @@ export default function Navbar() {
                                     </Link>
                                 );
                             })}
+
+                            {/* Mobile Admin route */}
+                            {user && isAdmin && !adminLoading && (
+                                <Link
+                                    href="/admin"
+                                    onClick={() => setIsMobileMenuOpen(false)}
+                                    className={`flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium transition-colors duration-200 ${pathname.startsWith('/admin')
+                                        ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                                        : 'text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                                        }`}
+                                >
+                                    <Shield className="w-5 h-5" />
+                                    <span className="flex-1">Admin Panel</span>
+                                </Link>
+                            )}
 
                             {/* Mobile Log In button */}
                             {!loading && !user && (

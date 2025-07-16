@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Image from 'next/image'
 import FilterSidebar from '@/components/browse/FilterSidebar'
-import { Eye, CheckCircle, Clock, User, MapPin, Calendar, Building, Monitor, Globe, Star, Timer, RotateCcw, ArrowRightLeft, DollarSign, MessageCircle, Handshake } from 'lucide-react'
+import { Eye, CheckCircle, Clock, User, MapPin, Calendar, Building, Monitor, Globe, Star, Timer, RotateCcw, ArrowRightLeft, DollarSign, MessageCircle, Handshake, ImageIcon } from 'lucide-react'
 
 export default function BrowsePage() {
     // SINGLE STATE - only for API data
@@ -100,8 +101,11 @@ export default function BrowsePage() {
         )
     }
 
-    // EXCHANGE-FOCUSED SKILL CARD WITH CLEAN HOVER
+    // ENHANCED SKILL CARD WITH OPTIMIZED THUMBNAIL
     const SkillCard = ({ skill }) => {
+        const [imageError, setImageError] = useState(false)
+        const [imageLoading, setImageLoading] = useState(true)
+
         const getDeliveryIcon = (method) => {
             switch (method) {
                 case 'In-person':
@@ -129,30 +133,58 @@ export default function BrowsePage() {
 
         const getLevelColor = (level) => {
             switch (level) {
-                case 'Beginner': return 'text-emerald-700 bg-emerald-100 border-emerald-300'
-                case 'Intermediate': return 'text-amber-700 bg-amber-100 border-amber-300'
-                case 'Advanced': return 'text-orange-700 bg-orange-100 border-orange-300'
-                case 'Expert': return 'text-red-700 bg-red-100 border-red-300'
-                default: return 'text-gray-700 bg-gray-100 border-gray-300'
+                case 'Beginner': return 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:bg-emerald-900 dark:text-emerald-300'
+                case 'Intermediate': return 'text-amber-700 bg-amber-100 border-amber-300 dark:bg-amber-900 dark:text-amber-300'
+                case 'Advanced': return 'text-orange-700 bg-orange-100 border-orange-300 dark:bg-orange-900 dark:text-orange-300'
+                case 'Expert': return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-900 dark:text-red-300'
+                default: return 'text-gray-700 bg-gray-100 border-gray-300 dark:bg-gray-800 dark:text-gray-300'
             }
         }
+
+        const thumbnailImage = skill.images?.[0]
+        const hasMultipleImages = skill.images && skill.images.length > 1
 
         return (
             <div className="group relative bg-white dark:bg-gray-900 rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-500 cursor-pointer border-2 border-gray-200 dark:border-gray-700 hover:border-[var(--parrot)]">
 
-                {/* IMAGE SECTION */}
-                <div className="relative h-32 bg-gradient-to-br from-slate-100 via-gray-100 to-stone-100 dark:from-gray-800 dark:via-gray-750 dark:to-gray-700 overflow-hidden">
-                    {skill.images?.[0] ? (
-                        <img
-                            src={skill.images[0].url}
-                            alt={skill.images[0].alt || skill.title}
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                        />
+                {/* OPTIMIZED IMAGE SECTION */}
+                <div className="relative h-48 bg-gradient-to-br from-slate-100 via-gray-100 to-stone-100 dark:from-gray-800 dark:via-gray-750 dark:to-gray-700 overflow-hidden">
+                    {thumbnailImage && !imageError ? (
+                        <>
+                            <Image
+                                src={thumbnailImage.url}
+                                alt={thumbnailImage.alt || skill.title}
+                                fill
+                                className="object-cover group-hover:scale-102 transition-transform duration-700"
+                                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                                priority={false}
+                                onLoad={() => setImageLoading(false)}
+                                onError={() => {
+                                    setImageError(true)
+                                    setImageLoading(false)
+                                }}
+                            />
+                            {imageLoading && (
+                                <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 animate-pulse flex items-center justify-center">
+                                    <div className="w-8 h-8 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            )}
+                        </>
                     ) : (
                         <div className="w-full h-full flex items-center justify-center">
                             <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                                <User className="w-8 h-8 text-white" />
+                                <ImageIcon className="w-8 h-8 text-white" />
                             </div>
+                        </div>
+                    )}
+
+                    {/* Image Count Badge */}
+                    {hasMultipleImages && (
+                        <div className="absolute top-3 left-3">
+                            <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-black/60 backdrop-blur-sm rounded-full">
+                                <ImageIcon className="w-3 h-3" />
+                                {skill.images.length}
+                            </span>
                         </div>
                     )}
 
@@ -178,23 +210,17 @@ export default function BrowsePage() {
 
                     {/* Exchange Success Rate - Bottom Overlay */}
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent h-12 flex items-end p-3">
-                        <div className="flex items-center gap-3 text-white text-xs">
+                        <div className="flex items-center gap-3 text-white text-md">
                             <div className="flex items-center gap-1">
-                                <Handshake className="w-3 h-3" />
-                                <span className="font-medium">{skill.exchangeCount || 0} exchanges</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                                <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                                <span className="font-medium">4.8</span>
+                                <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+                                <span className="font-bold">{skill.owner?.rating || 4.8}</span>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 {/* CONTENT SECTION */}
-                {/* CONTENT SECTION */}
                 <div className="p-5">
-
                     {/* TITLE */}
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white leading-tight mb-2 line-clamp-2 transition-colors">
                         {skill.title}
@@ -202,13 +228,21 @@ export default function BrowsePage() {
 
                     {/* Provider Info */}
                     <div className="flex items-center gap-2 mb-3">
-                        <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
-                            <span className="text-xs font-bold text-white">
-                                {skill.owner?.name?.[0] || skill.owner?.firstName?.[0] || 'U'}
-                            </span>
+                        <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                            {skill.owner?.avatar ? (
+                                <Image
+                                    src={skill.owner.avatar}
+                                    alt={skill.owner.name || 'Profile'}
+                                    width={24}
+                                    height={24}
+                                    className="w-6 h-6 rounded-full object-cover"
+                                />
+                            ) : (
+                                skill.owner?.name?.[0]?.toUpperCase() || skill.owner?.email?.[0]?.toUpperCase() || 'U'
+                            )}
                         </div>
                         <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                            {skill.owner?.name || skill.owner?.firstName || 'Anonymous'}
+                            {skill.owner?.name || 'Anonymous'}
                         </span>
                         <span className={`px-2 py-0.5 text-xs font-medium rounded-md border ${getLevelColor(skill.level)}`}>
                             {skill.level}
@@ -348,7 +382,7 @@ export default function BrowsePage() {
                         )}
 
                         {!loading && skillsData?.skills && (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-8">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                                 {skillsData.skills.map(skill => (
                                     <SkillCard key={skill._id} skill={skill} />
                                 ))}

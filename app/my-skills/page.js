@@ -1,9 +1,12 @@
+// app/my-skills/page.js
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useUser } from '@/hooks/use-user';
+import { ImageIcon } from 'lucide-react';
 
 export default function MySkillsPage() {
     const { user, loading } = useUser();
@@ -90,6 +93,14 @@ export default function MySkillsPage() {
         }
     };
 
+    // Get thumbnail image for skill
+    const getSkillThumbnail = (skill) => {
+        if (skill.images && skill.images.length > 0) {
+            return skill.images[0]; // First image is the thumbnail
+        }
+        return null;
+    };
+
     // Show loading state
     if (loading || isLoading) {
         return (
@@ -148,7 +159,7 @@ export default function MySkillsPage() {
 
                     {/* Add New Skill Button */}
                     <Link
-                        href="/skills/add"
+                        href="/my-skills/add"
                         className="inline-flex items-center bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-6 py-3 rounded-lg font-medium transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
                     >
                         <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -209,7 +220,7 @@ export default function MySkillsPage() {
                             Start sharing your expertise with the community and help others learn new skills.
                         </p>
                         <Link
-                            href="/skills/add"
+                            href="/my-skills/add"
                             className="inline-flex items-center bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 px-6 py-3 rounded-lg font-medium transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-xl"
                         >
                             Share Your First Skill
@@ -217,105 +228,138 @@ export default function MySkillsPage() {
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {skills.map((skill) => (
-                            <div key={skill.id} className="bg-white dark:bg-gray-900 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-[var(--parrot)] hover:shadow-xl transition-all duration-200">
-                                {/* Skill Header */}
-                                <div className="flex justify-between items-start mb-4">
-                                    <div className="flex-1">
-                                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 line-clamp-2">
-                                            {skill.title}
-                                        </h3>
-                                        <div className="flex items-center gap-2">
-                                            <span className="inline-block bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 text-xs px-2 py-1 rounded-full font-medium">
-                                                {skill.category}
-                                            </span>
-                                            <span className="inline-block bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded-full">
-                                                {skill.level}
-                                            </span>
+                        {skills.map((skill) => {
+                            const thumbnail = getSkillThumbnail(skill);
+                            
+                            return (
+                                <div key={skill.id} className="bg-white dark:bg-gray-900 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden hover:border-[var(--parrot)] hover:shadow-xl transition-all duration-200">
+                                    {/* Skill Thumbnail Image */}
+                                    <div className="relative h-48 w-full bg-gray-100 dark:bg-gray-800">
+                                        {thumbnail ? (
+                                            <Image
+                                                src={thumbnail.url}
+                                                alt={thumbnail.alt || skill.title}
+                                                fill
+                                                className="object-cover"
+                                                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                                                priority={false}
+                                            />
+                                        ) : (
+                                            <div className="h-full w-full flex items-center justify-center">
+                                                <ImageIcon className="w-12 h-12 text-gray-400 dark:text-gray-500" />
+                                            </div>
+                                        )}
+                                        
+                                        {/* Availability Badge Overlay */}
+                                        <div className="absolute top-2 right-2">
+                                            <button
+                                                onClick={() => toggleAvailability(skill.id, skill.isAvailable)}
+                                                className={`text-xs px-2 py-1 rounded-full transition-colors duration-200 backdrop-blur-sm ${
+                                                    skill.isAvailable
+                                                        ? 'bg-green-100/90 dark:bg-green-900/90 text-green-700 dark:text-green-300 hover:bg-green-200/90 dark:hover:bg-green-800/90'
+                                                        : 'bg-red-100/90 dark:bg-red-900/90 text-red-700 dark:text-red-300 hover:bg-red-200/90 dark:hover:bg-red-800/90'
+                                                }`}
+                                            >
+                                                {skill.isAvailable ? 'Available' : 'Unavailable'}
+                                            </button>
                                         </div>
-                                    </div>
-                                    <button
-                                        onClick={() => toggleAvailability(skill.id, skill.isAvailable)}
-                                        className={`text-xs px-2 py-1 rounded-full transition-colors duration-200 ${skill.isAvailable
-                                            ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
-                                            : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800'
-                                            }`}
-                                    >
-                                        {skill.isAvailable ? 'Available' : 'Unavailable'}
-                                    </button>
-                                </div>
 
-                                {/* Skill Details */}
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-3">
-                                    {skill.description}
-                                </p>
-
-                                {/* Skill Meta */}
-                                <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
-                                    <div className="flex justify-between">
-                                        <span>Level:</span>
-                                        <span className="font-medium text-gray-900 dark:text-white">{skill.level}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Views:</span>
-                                        <span className="font-medium text-gray-900 dark:text-white">{skill.viewCount || 0}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Exchanges:</span>
-                                        <span className="font-medium text-gray-900 dark:text-white">{skill.exchangeCount || 0}</span>
-                                    </div>
-                                    {skill.deliveryMethod && (
-                                        <div className="flex justify-between">
-                                            <span>Method:</span>
-                                            <span className="font-medium text-gray-900 dark:text-white">{skill.deliveryMethod}</span>
-                                        </div>
-                                    )}
-                                    {skill.estimatedDuration && (
-                                        <div className="flex justify-between">
-                                            <span>Duration:</span>
-                                            <span className="font-medium text-gray-900 dark:text-white">{skill.estimatedDuration}</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Tags */}
-                                {skill.tags && skill.tags.length > 0 && (
-                                    <div className="mb-4">
-                                        <div className="flex flex-wrap gap-1">
-                                            {skill.tags.slice(0, 3).map((tag, index) => (
-                                                <span
-                                                    key={index}
-                                                    className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-1 rounded"
-                                                >
-                                                    {tag}
+                                        {/* Image Count Badge (if multiple images) */}
+                                        {skill.images && skill.images.length > 1 && (
+                                            <div className="absolute bottom-2 left-2">
+                                                <span className="bg-black/60 text-white text-xs px-2 py-1 rounded-full backdrop-blur-sm">
+                                                    +{skill.images.length - 1} more
                                                 </span>
-                                            ))}
-                                            {skill.tags.length > 3 && (
-                                                <span className="text-xs text-gray-500 dark:text-gray-500">
-                                                    +{skill.tags.length - 3} more
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Card Content */}
+                                    <div className="p-6">
+                                        {/* Skill Header */}
+                                        <div className="mb-4">
+                                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 line-clamp-2">
+                                                {skill.title}
+                                            </h3>
+                                            <div className="flex items-center gap-2">
+                                                <span className="inline-block bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 text-xs px-2 py-1 rounded-full font-medium">
+                                                    {skill.category}
                                                 </span>
+                                                <span className="inline-block bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded-full">
+                                                    {skill.level}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Skill Details */}
+                                        <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-3">
+                                            {skill.description}
+                                        </p>
+
+                                        {/* Skill Meta */}
+                                        <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
+                                            <div className="flex justify-between">
+                                                <span>Views:</span>
+                                                <span className="font-medium text-gray-900 dark:text-white">{skill.viewCount || 0}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>Exchanges:</span>
+                                                <span className="font-medium text-gray-900 dark:text-white">{skill.exchangeCount || 0}</span>
+                                            </div>
+                                            {skill.deliveryMethod && (
+                                                <div className="flex justify-between">
+                                                    <span>Method:</span>
+                                                    <span className="font-medium text-gray-900 dark:text-white">{skill.deliveryMethod}</span>
+                                                </div>
+                                            )}
+                                            {skill.estimatedDuration && (
+                                                <div className="flex justify-between">
+                                                    <span>Duration:</span>
+                                                    <span className="font-medium text-gray-900 dark:text-white">{skill.estimatedDuration}</span>
+                                                </div>
                                             )}
                                         </div>
-                                    </div>
-                                )}
 
-                                {/* Action Buttons */}
-                                <div className="flex gap-2">
-                                    <Link
-                                        href={`/my-skills/edit/${skill.id}`}
-                                        className="flex-1 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-900 dark:text-white text-sm py-2 px-3 rounded-lg font-medium transition-all duration-200 border border-gray-200 dark:border-gray-700 text-center"
-                                    >
-                                        Edit
-                                    </Link>
-                                    <button
-                                        onClick={() => setDeleteConfirm(skill)}
-                                        className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 px-3 rounded-lg font-medium transition-all duration-200"
-                                    >
-                                        Delete
-                                    </button>
+                                        {/* Tags */}
+                                        {skill.tags && skill.tags.length > 0 && (
+                                            <div className="mb-4">
+                                                <div className="flex flex-wrap gap-1">
+                                                    {skill.tags.slice(0, 3).map((tag, index) => (
+                                                        <span
+                                                            key={index}
+                                                            className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-1 rounded"
+                                                        >
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                    {skill.tags.length > 3 && (
+                                                        <span className="text-xs text-gray-500 dark:text-gray-500">
+                                                            +{skill.tags.length - 3} more
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Action Buttons */}
+                                        <div className="flex gap-2">
+                                            <Link
+                                                href={`/my-skills/edit/${skill.id}`}
+                                                className="flex-1 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-900 dark:text-white text-sm py-2 px-3 rounded-lg font-medium transition-all duration-200 border border-gray-200 dark:border-gray-700 text-center"
+                                            >
+                                                Edit
+                                            </Link>
+                                            <button
+                                                onClick={() => setDeleteConfirm(skill)}
+                                                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 px-3 rounded-lg font-medium transition-all duration-200"
+                                            >
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>

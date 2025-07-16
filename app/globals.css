@@ -29,3 +29,27 @@ body {
     color: var(--foreground);
     font-family: var(--font-lato);
 }
+
+/* globals.css */
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+/* Enhanced scroll snap behavior */
+.scroll-smooth {
+    scroll-behavior: smooth;
+}
+
+/* Improve scroll snap alignment */
+.snap-x {
+    scroll-snap-type: x mandatory;
+}
+
+.snap-start {
+    scroll-snap-align: start;
+}

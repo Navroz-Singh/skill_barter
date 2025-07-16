@@ -2,8 +2,7 @@
 const nextConfig = {
     // Image optimization
     images: {
-        domains: ['lh3.googleusercontent.com'],
-        formats: ['image/avif', 'image/webp'],
+        domains: ['lh3.googleusercontent.com', 'res.cloudinary.com', 'www.thesprucepets.com'],
         minimumCacheTTL: 86400, // 24 hours
         deviceSizes: [640, 828, 1200, 1920],
         imageSizes: [32, 64, 96, 128, 256],

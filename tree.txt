@@ -1,18 +1,72 @@
 ├── app
+│   ├── admin
+│   │   ├── disputes
+│   │   │   ├── exchange
+│   │   │   │   └── [exchangeId]
+│   │   │   │       └── page.js
+│   │   │   └── page.js
+│   │   ├── users
+│   │   │   └── page.js
+│   │   ├── layout.js
+│   │   └── page.js
 │   ├── api
-│   │   ├── chat
-│   │   │   ├── [roomid]
+│   │   ├── admin
+│   │   │   ├── check
+│   │   │   │   └── route.js
+│   │   │   ├── dashboard
+│   │   │   │   └── route.js
+│   │   │   ├── disputes
+│   │   │   │   ├── [disputeId]
+│   │   │   │   │   └── resolve
+│   │   │   │   │       └── route.js
+│   │   │   │   ├── exchange
+│   │   │   │   │   └── [exchangeId]
+│   │   │   │   │       └── route.js
+│   │   │   │   └── exchanges
+│   │   │   │       └── route.js
+│   │   │   └── users
+│   │   │       ├── [userId]
+│   │   │       │   ├── toggle-active
+│   │   │       │   │   └── route.js
+│   │   │       │   └── toggle-admin
+│   │   │       │       └── route.js
+│   │   │       └── route.js
+│   │   ├── analytics
+│   │   │   ├── dashboard
+│   │   │   │   └── route.js
+│   │   │   └── skill-categories
+│   │   │       └── route.js
+│   │   ├── disputes
+│   │   │   └── my-disputes
+│   │   │       └── route.js
+│   │   ├── exchanges
+│   │   │   ├── [id]
+│   │   │   │   ├── accept
+│   │   │   │   │   └── route.js
+│   │   │   │   ├── chat-status
+│   │   │   │   │   └── route.js
+│   │   │   │   ├── mark-read
+│   │   │   │   │   └── route.js
 │   │   │   │   ├── messages
 │   │   │   │   │   └── route.js
+│   │   │   │   ├── negotiation
+│   │   │   │   │   ├── agreement
+│   │   │   │   │   │   └── route.js
+│   │   │   │   │   ├── deliverables
+│   │   │   │   │   │   └── route.js
+│   │   │   │   │   └── offer
+│   │   │   │   │       └── route.js
+│   │   │   │   ├── reviews
+│   │   │   │   │   └── route.js
+│   │   │   │   ├── timeline
+│   │   │   │   │   └── route.js
 │   │   │   │   └── route.js
-│   │   │   └── create-room
-│   │   │       └── route.js
-│   │   ├── chats
-│   │   │   ├── [roomid]
-│   │   │   │   └── route.js
-│   │   │   ├── unread-count
+│   │   │   ├── dashboard
 │   │   │   │   └── route.js
 │   │   │   └── route.js
+│   │   ├── help
+│   │   │   └── chat
+│   │   │       └── route.js
 │   │   ├── skills
 │   │   │   ├── [id]
 │   │   │   │   └── route.js
@@ -20,6 +74,12 @@
 │   │   │   │   └── route.js
 │   │   │   └── route.js
 │   │   └── user
+│   │       ├── deactivate
+│   │       │   └── route.js
+│   │       ├── delete
+│   │       │   └── route.js
+│   │       ├── profile
+│   │       │   └── route.js
 │   │       └── sync
 │   │           └── route.js
 │   ├── auth
@@ -28,10 +88,12 @@
 │   │   └── page.js
 │   ├── browse
 │   │   └── page.js
-│   ├── chats
-│   │   ├── chat
-│   │   │   └── [roomid]
-│   │   │       └── page.js
+│   ├── exchange
+│   │   └── [id]
+│   │       ├── negotiate
+│   │       │   └── page.js
+│   │       └── page.js
+│   ├── exchanges
 │   │   └── page.js
 │   ├── my-skills
 │   │   ├── add
@@ -40,23 +102,69 @@
 │   │   │   └── [id]
 │   │   │       └── page.js
 │   │   └── page.js
+│   ├── profile
+│   │   ├── disputes
+│   │   │   └── page.js
+│   │   ├── exchanges
+│   │   │   └── page.js
+│   │   ├── help
+│   │   │   └── page.js
+│   │   ├── settings
+│   │   │   └── page.js
+│   │   ├── skills
+│   │   │   └── page.js
+│   │   ├── layout.js
+│   │   └── page.js
 │   ├── skill
 │   │   └── [id]
+│   │       └── page.js
+│   ├── view-profile
+│   │   └── [userid]
+│   │       ├── not-found.js
 │   │       └── page.js
 │   ├── favicon.ico
 │   ├── globals.css
 │   ├── layout.js
 │   └── page.js
 ├── components
+│   ├── admin
+│   │   └── AdminSidebar.js
 │   ├── browse
 │   │   └── FilterSidebar.js
-│   ├── chat
-│   │   ├── ChatWindow.js
-│   │   └── MessageArea.js
-│   ├── Providers
-│   │   └── ThemeProvider.js
+│   ├── exchange
+│   │   ├── AgreementStatusCompact.js
+│   │   ├── ChatInterface.js
+│   │   ├── ChatMessage.js
+│   │   ├── DeliverablesPanel.js
+│   │   ├── ExchangeListItem.js
+│   │   ├── ExchangeSidebar.js
+│   │   ├── NegotiationPlayground.js
+│   │   ├── PaymentPanel.js
+│   │   ├── ProgressOverview.js
+│   │   ├── ReviewModal.js
+│   │   ├── TheirOfferPanel.js
+│   │   ├── TimelineManager.js
+│   │   └── UserOfferPanel.js
+│   ├── help
+│   │   ├── ChatButton.js
+│   │   ├── ChatModal.js
+│   │   ├── FAQItem.js
+│   │   └── FAQSection.js
+│   ├── modals
+│   │   ├── ConfirmTermsAgreementModal.js
+│   │   └── ExchangeRequestModal.js
+│   ├── profile
+│   │   ├── ExchangeCard.js
+│   │   ├── ExchangesChart.js
+│   │   ├── MetricCard.js
+│   │   ├── Sidebar.js
+│   │   ├── SkillCard.js
+│   │   └── SkillViewsChart.js
 │   ├── skills
-│   │   └── skill-form.js
+│   │   ├── ImageCarousel.js
+│   │   ├── skill-form.js
+│   │   ├── SkillDetailsCard.js
+│   │   └── UserProfileCard.js
 │   ├── ui
 │   │   ├── cta-section.js
 │   │   ├── featured-skills-section.js
@@ -65,30 +173,48 @@
 │   │   ├── how-it-works-section.js
 │   │   ├── logo.js
 │   │   ├── social-proof-section.js
+│   │   ├── StarRating.js
 │   │   ├── ThemeToggleButton.js
+│   │   ├── UserRating.js
 │   │   └── value-propositions-section.js
 │   └── Navbar.js
+├── data
+│   └── helpFAQs.js
 ├── hooks
-│   └── use-user.js
+│   ├── use-user.js
+│   ├── useAdminCheck.js
+│   └── useExchangeChat.js
 ├── lib
 │   ├── supabase
 │   │   ├── client.js
 │   │   └── server.js
+│   ├── analytics.js
+│   ├── gemini.js
 │   ├── mongodb.js
 │   └── socket.js
 ├── models
+│   ├── Dispute.js
 │   ├── Exchange.js
 │   ├── Message.js
+│   ├── NegotiationSession.js
+│   ├── Review.js
 │   ├── Skill.js
-│   ├── User.js
-│   └── UserChatRoom.js
+│   ├── SkillCategory.js
+│   ├── SkillView.js
+│   └── User.js
+├── Providers
+│   └── ThemeProvider.js
 ├── utils
+│   ├── exchangeChatHelpers.js
 │   ├── NavbarWrapper.js
-│   └── ThemeProviderWrapper.js
+│   ├── roleBasedPermissions.js
+│   ├── ThemeProviderWrapper.js
+│   └── updateSkillCategories.js
 ├── .env.local
 ├── .gitignore
 ├── eslint.config.mjs
 ├── generate-tree.js
+├── getcode.js
 ├── jsconfig.json
 ├── middleware.js
 ├── next.config.mjs
@@ -97,7 +223,6 @@
 ├── postcss.config.mjs
 ├── README.md
 ├── server.js
-├── temp.md
 ├── temp.txt
 ├── todo.txt
 └── tree.txt

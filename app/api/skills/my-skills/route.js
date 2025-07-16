@@ -1,3 +1,4 @@
+// app/api/skills/my-skills/route.js
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import connectDB from '@/lib/mongodb';
@@ -19,10 +20,10 @@ export async function GET(req) {
         // Connect to MongoDB after successful auth
         await connectDB();
 
-        // Fetch user's skills
+        // Fetch user's skills with all fields
         const skills = await Skill.find({ ownerSupabaseId: user.id })
             .sort({ createdAt: -1 })
-            .populate('owner', 'name email avatar'); // Changed from 'profilePicture' to 'avatar'
+            .populate('owner', 'name email avatar');
 
         return NextResponse.json({
             success: true,
@@ -33,19 +34,21 @@ export async function GET(req) {
                 category: skill.category,
                 level: skill.level,
                 tags: skill.tags,
+                images: skill.images || [], // ✅ Added images field with fallback
                 location: skill.location,
                 deliveryMethod: skill.deliveryMethod,
                 estimatedDuration: skill.estimatedDuration,
                 isAvailable: skill.isAvailable,
                 exchangeCount: skill.exchangeCount,
                 viewCount: skill.viewCount,
+                interestedUsers: skill.interestedUsers || [], // ✅ Added for completeness
                 createdAt: skill.createdAt,
                 updatedAt: skill.updatedAt,
                 // Include owner details in response
                 owner: {
-                    name: skill.owner.name,
-                    email: skill.owner.email,
-                    avatar: skill.owner.avatar
+                    name: skill.owner?.name || 'Unknown',
+                    email: skill.owner?.email || '',
+                    avatar: skill.owner?.avatar || ''
                 }
             }))
         });

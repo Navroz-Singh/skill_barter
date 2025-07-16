@@ -1,6 +1,6 @@
 'use client';
 
-import { useTheme } from '@/components/Providers/ThemeProvider';
+import { useTheme } from '@/Providers/ThemeProvider';
 
 export default function ThemeToggle() {
     const { theme, toggleTheme } = useTheme();

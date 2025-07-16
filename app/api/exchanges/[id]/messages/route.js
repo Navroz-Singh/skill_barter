@@ -1,4 +1,4 @@
-// api/exchanges/[id]/messages
+// api/exchanges/[id]/messages/route.js
 
 import connectDB from '@/lib/mongodb';
 import Message from '@/models/Message';
@@ -12,7 +12,7 @@ const isChatAvailable = (status) => {
     return ['negotiating', 'accepted', 'in_progress'].includes(status);
 };
 
-// GET: Fetch messages for specific exchange
+// GET: Fetch messages for specific exchange (simplified)
 export async function GET(request, { params }) {
     try {
         await connectDB();
@@ -67,15 +67,18 @@ export async function GET(request, { params }) {
             );
         }
 
-        // Fetch messages with pagination (newest first, then reverse)
-        const messages = await Message.find({ exchangeId })
-            .sort({ createdAt: -1 })
+        // Simple query - no sequence complexity
+        const query = { exchangeId };
+
+        // Fetch messages with pagination (simple timestamp sorting)
+        const messages = await Message.find(query)
+            .sort({ createdAt: -1 }) // Simple timestamp sorting only
             .limit(limit)
             .skip((page - 1) * limit)
             .populate('sender.userId', 'name email');
 
         // Calculate if there are more messages
-        const totalMessages = await Message.countDocuments({ exchangeId });
+        const totalMessages = await Message.countDocuments(query);
         const hasMore = (page * limit) < totalMessages;
 
         return NextResponse.json({
@@ -102,7 +105,7 @@ export async function GET(request, { params }) {
     }
 }
 
-// POST: Send new message in exchange
+// POST: Send new message in exchange (simplified)
 export async function POST(request, { params }) {
     try {
         await connectDB();
@@ -119,7 +122,7 @@ export async function POST(request, { params }) {
         }
 
         const { id: exchangeId } = await params;
-        const { content } = await request.json();
+        const { content } = await request.json(); // Removed clientSequence
 
         // Use authenticated user as sender
         const senderSupabaseId = user.id;
@@ -128,6 +131,13 @@ export async function POST(request, { params }) {
         if (!content || !content.trim()) {
             return NextResponse.json(
                 { success: false, error: 'Message content is required' },
+                { status: 400 }
+            );
+        }
+
+        if (content.trim().length > 1000) {
+            return NextResponse.json(
+                { success: false, error: 'Message content too long (max 1000 characters)' },
                 { status: 400 }
             );
         }
@@ -180,7 +190,7 @@ export async function POST(request, { params }) {
             ? 'initiator'
             : 'recipient';
 
-        // Create and save new message
+        // Create and save new message (no sequence complexity)
         const newMessage = new Message({
             exchangeId,
             content: content.trim(),
@@ -190,6 +200,7 @@ export async function POST(request, { params }) {
                 role: senderRole
             },
             type: 'user'
+            // Removed: sequence, clientSequence
         });
 
         const savedMessage = await newMessage.save();

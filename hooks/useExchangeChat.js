@@ -1,254 +1,56 @@
+// hooks/useExchangeChat.js
+
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useExchangeSocket } from '@/lib/socket';
-import { validateMessageContent } from '@/utils/exchangeChatHelpers';
+import { validateMessageContent, isDuplicateMessage, generateTempMessageId } from '@/utils/exchangeChatHelpers';
 
 export function useExchangeChat(exchangeId, currentUser) {
-    // Core state (minimal useState)
+    // Core state
     const [messages, setMessages] = useState([]);
     const [connectionStatus, setConnectionStatus] = useState('disconnected');
     const [error, setError] = useState(null);
     const [otherUserTyping, setOtherUserTyping] = useState(false);
-    const [connectionQuality, setConnectionQuality] = useState('good');
-
-    // NEW Step 10: Synchronization state
-    const [isSyncing, setIsSyncing] = useState(false);
+    const [loading, setLoading] = useState(false);
 
     // Refs for non-rendering values
     const socketManagerRef = useRef(null);
-    const messageQueueRef = useRef([]);
-    const reconnectTimeoutRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const isTypingRef = useRef(false);
-    const lastMessageIdRef = useRef(null);
-
-    // Retry management
-    const retryCountRef = useRef(0);
-    const maxRetriesRef = useRef(5);
-    const heartbeatIntervalRef = useRef(null);
-    const lastHeartbeatRef = useRef(Date.now());
-
-    // NEW Step 10: Message ordering and conflict resolution
-    const messageSequenceRef = useRef(0);
-    const lastServerSequenceRef = useRef(0);
-    const pendingMessagesRef = useRef(new Map()); // tempId -> message
-    const messageHistoryRef = useRef(new Set()); // Track all message IDs
-    const lastSyncTimestampRef = useRef(null);
 
     // Initialize socket manager
     if (!socketManagerRef.current) {
         socketManagerRef.current = useExchangeSocket();
     }
 
-    // NEW Step 10: Enhanced message ordering utility
-    const sortMessagesByOrder = useCallback((messages) => {
-        return messages.sort((a, b) => {
-            // First sort by server sequence if available
-            if (a.sequence && b.sequence) {
-                return a.sequence - b.sequence;
-            }
-            // Fallback to timestamp
-            const timeA = new Date(a.createdAt).getTime();
-            const timeB = new Date(b.createdAt).getTime();
-            return timeA - timeB;
-        });
-    }, []);
+    // Load messages from API
+    const loadMessages = useCallback(async () => {
+        if (!exchangeId) return;
 
-    // NEW Step 10: Enhanced duplicate detection
-    const isDuplicateMessage = useCallback((newMessage) => {
-        // Check by message ID
-        if (messageHistoryRef.current.has(newMessage._id)) {
-            return true;
-        }
-
-        // Check by content and timestamp for potential duplicates
-        const timeWindow = 5000; // 5 seconds
-        const newTime = new Date(newMessage.createdAt).getTime();
-
-        return messages.some(existing =>
-            existing.sender?.supabaseId === newMessage.sender?.supabaseId &&
-            existing.content === newMessage.content &&
-            Math.abs(new Date(existing.createdAt).getTime() - newTime) < timeWindow
-        );
-    }, [messages]);
-
-    // NEW Step 10: Message reconciliation after reconnection
-    const reconcileMessages = useCallback(async (serverMessages) => {
-        setIsSyncing(true);
-
+        setLoading(true);
         try {
-            // Create a map of server messages by ID
-            const serverMap = new Map(serverMessages.map(msg => [msg._id, msg]));
-
-            // Get current local messages
-            const localMessages = [...messages];
-
-            // Find messages that exist locally but not on server (failed sends)
-            const localOnlyMessages = localMessages.filter(local =>
-                local._id.startsWith('temp-') && !serverMap.has(local._id)
-            );
-
-            // Find messages that exist on server but not locally (missed while offline)
-            const serverOnlyMessages = serverMessages.filter(server =>
-                !messageHistoryRef.current.has(server._id)
-            );
-
-            // Merge and sort all messages
-            const reconciledMessages = [
-                ...localMessages.filter(msg =>
-                    !msg._id.startsWith('temp-') || serverMap.has(msg._id)
-                ),
-                ...serverOnlyMessages
-            ];
-
-            // Sort by sequence/timestamp
-            const sortedMessages = sortMessagesByOrder(reconciledMessages);
-
-            // Update message history tracking
-            sortedMessages.forEach(msg => {
-                if (msg._id && !msg._id.startsWith('temp-')) {
-                    messageHistoryRef.current.add(msg._id);
-                }
-            });
-
-            // Update sequence tracking
-            const lastMessage = sortedMessages[sortedMessages.length - 1];
-            if (lastMessage?.sequence) {
-                lastServerSequenceRef.current = lastMessage.sequence;
-            }
-
-            setMessages(sortedMessages);
-
-            // Re-queue failed local messages
-            localOnlyMessages.forEach(msg => {
-                if (msg.status === 'failed' || msg.status === 'sending') {
-                    messageQueueRef.current.push({
-                        content: msg.content,
-                        tempId: msg._id,
-                        priority: 'high' // High priority for failed messages
-                    });
-                }
-            });
-
-            return true;
-        } catch (error) {
-            console.error('Error reconciling messages:', error);
-            return false;
-        } finally {
-            setIsSyncing(false);
-        }
-    }, [messages, sortMessagesByOrder]);
-
-    // Enhanced message synchronization with reconciliation
-    const syncMessages = useCallback(async () => {
-        try {
-            const url = lastSyncTimestampRef.current
-                ? `/api/exchanges/${exchangeId}/messages?since=${lastSyncTimestampRef.current}`
-                : `/api/exchanges/${exchangeId}/messages`;
-
-            const response = await fetch(url);
+            const response = await fetch(`/api/exchanges/${exchangeId}/messages`, {cache: 'no-store'});
             const data = await response.json();
 
             if (data.success) {
-                await reconcileMessages(data.messages);
-                lastMessageIdRef.current = data.messages[data.messages.length - 1]?._id;
-                lastSyncTimestampRef.current = new Date().toISOString();
-                return true;
-            }
-            return false;
-        } catch (error) {
-            console.error('Error syncing messages:', error);
-            return false;
-        }
-    }, [exchangeId, reconcileMessages]);
-
-    // Simple heartbeat monitoring
-    const startHeartbeat = useCallback(() => {
-        if (heartbeatIntervalRef.current) {
-            clearInterval(heartbeatIntervalRef.current);
-        }
-
-        heartbeatIntervalRef.current = setInterval(() => {
-            const now = Date.now();
-            const timeSinceLastBeat = now - lastHeartbeatRef.current;
-
-            if (timeSinceLastBeat > 10000) {
-                setConnectionQuality('poor');
-            } else if (timeSinceLastBeat > 5000) {
-                setConnectionQuality('fair');
-            } else {
-                setConnectionQuality('good');
-            }
-
-            if (socketManagerRef.current?.isConnected) {
-                socketManagerRef.current.socket?.emit('heartbeat');
-            }
-        }, 3000);
-    }, []);
-
-    const stopHeartbeat = useCallback(() => {
-        if (heartbeatIntervalRef.current) {
-            clearInterval(heartbeatIntervalRef.current);
-            heartbeatIntervalRef.current = null;
-        }
-    }, []);
-
-    // Enhanced retry logic with exponential backoff
-    const getRetryDelay = useCallback(() => {
-        const baseDelay = 1000;
-        const maxDelay = 30000;
-        const delay = Math.min(baseDelay * Math.pow(2, retryCountRef.current), maxDelay);
-        return delay;
-    }, []);
-
-    // Message delivery confirmation
-    const confirmMessageDelivery = useCallback((messageId, tempId) => {
-        setMessages(prev =>
-            prev.map(msg => {
-                if (msg._id === messageId || msg._id === tempId) {
-                    // Remove from pending tracking
-                    if (tempId) {
-                        pendingMessagesRef.current.delete(tempId);
-                    }
-                    // Add to message history
-                    messageHistoryRef.current.add(messageId);
-                    return { ...msg, _id: messageId, status: 'delivered' };
-                }
-                return msg;
-            })
-        );
-    }, []);
-
-    // NEW Step 10: Enhanced queue processing with priorities
-    const processMessageQueue = useCallback(async () => {
-        const queue = [...messageQueueRef.current];
-        messageQueueRef.current = [];
-
-        // Sort queue by priority (high priority first)
-        queue.sort((a, b) => {
-            const priorityOrder = { high: 0, normal: 1, low: 2 };
-            return priorityOrder[a.priority || 'normal'] - priorityOrder[b.priority || 'normal'];
-        });
-
-        for (const messageData of queue) {
-            try {
-                await sendMessage(messageData.content);
-                // Small delay between messages to avoid overwhelming server
-                await new Promise(resolve => setTimeout(resolve, 100));
-            } catch (error) {
-                console.error('Error processing queued message:', error);
-                // Re-queue failed message with lower priority
-                messageQueueRef.current.push({
-                    ...messageData,
-                    priority: 'low',
-                    retryCount: (messageData.retryCount || 0) + 1
+                // Simple timestamp-based sorting
+                const sortedMessages = data.messages.sort((a, b) => {
+                    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
                 });
+                setMessages(sortedMessages);
+            } else {
+                setError(data.error || 'Failed to load messages');
             }
+        } catch (err) {
+            console.error('Error loading messages:', err);
+            setError('Failed to load messages');
+        } finally {
+            setLoading(false);
         }
-    }, []);
+    }, [exchangeId]);
 
-    // Enhanced send message with sequence tracking
+    // Send message
     const sendMessage = useCallback(async (content) => {
         const validation = validateMessageContent(content);
         if (!validation.isValid) {
@@ -256,115 +58,76 @@ export function useExchangeChat(exchangeId, currentUser) {
             return false;
         }
 
-        // Generate sequence number for ordering
-        messageSequenceRef.current += 1;
-        const clientSequence = messageSequenceRef.current;
+        const tempId = generateTempMessageId();
 
-        const messageData = {
-            content: validation.trimmedContent,
-            timestamp: new Date().toISOString(),
-            tempId: `temp-${Date.now()}-${clientSequence}`,
-            clientSequence
-        };
-
-        // Optimistic update with sequence
+        // Optimistic update
         const optimisticMessage = {
-            _id: messageData.tempId,
-            content: messageData.content,
+            _id: tempId,
+            content: validation.trimmedContent,
             type: 'user',
             sender: {
-                supabaseId: currentUser.id,
+                supabaseId: currentUser.supabaseId,
                 role: 'unknown'
             },
             createdAt: new Date(),
-            readBy: [{ supabaseId: currentUser.id }],
-            status: 'sending',
-            clientSequence,
-            sequence: null // Will be set by server
+            readBy: [{ supabaseId: currentUser.supabaseId }],
+            status: 'sending'
         };
 
-        setMessages(prev => {
-            const updated = [...prev, optimisticMessage];
-            return sortMessagesByOrder(updated);
-        });
-
-        // Track pending message
-        pendingMessagesRef.current.set(messageData.tempId, optimisticMessage);
+        setMessages(prev => [...prev, optimisticMessage]);
 
         try {
+            const socketSent = socketManagerRef.current?.isReady();
+
+            if (socketSent) {
+                // Prefer socket: saves on server & broadcasts, avoids double-write
+                socketManagerRef.current.sendExchangeMessage(
+                    exchangeId,
+                    validation.trimmedContent,
+                    tempId
+                );
+
+                // Success will be reflected when `message-delivered` comes back
+                return true;
+            }
+
+            // Fallback to REST API when socket not connected
             const response = await fetch(`/api/exchanges/${exchangeId}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: messageData.content,
-                    clientSequence
-                })
+                body: JSON.stringify({ content: validation.trimmedContent }),
+                cache: 'no-store'
             });
-
             const data = await response.json();
 
             if (data.success) {
-                // Update sequence tracking
-                if (data.message.sequence) {
-                    lastServerSequenceRef.current = Math.max(
-                        lastServerSequenceRef.current,
-                        data.message.sequence
-                    );
-                }
-
-                // Replace optimistic message with real message
-                setMessages(prev => {
-                    const updated = prev.map(msg =>
-                        msg._id === messageData.tempId
-                            ? { ...data.message, status: 'sent' }
-                            : msg
-                    );
-                    return sortMessagesByOrder(updated);
-                });
-
-                // Track message ID
-                messageHistoryRef.current.add(data.message._id);
-
-                // Send via socket for real-time
-                if (socketManagerRef.current?.isConnected) {
-                    socketManagerRef.current.sendExchangeMessage(
-                        exchangeId,
-                        messageData.content,
-                        data.message._id,
-                        data.message.sequence
-                    );
-                }
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg._id === tempId ? { ...data.message, status: 'sent' } : msg
+                    )
+                );
                 return true;
-            } else {
-                throw new Error(data.error);
             }
 
+            throw new Error(data.error || 'Failed to send');
         } catch (error) {
             console.error('Error sending message:', error);
 
             // Mark message as failed
             setMessages(prev =>
                 prev.map(msg =>
-                    msg._id === messageData.tempId
+                    msg._id === tempId
                         ? { ...msg, status: 'failed' }
                         : msg
                 )
             );
 
-            // Queue for retry if connection issue
-            if (connectionStatus !== 'connected') {
-                messageQueueRef.current.push({
-                    ...messageData,
-                    priority: 'high'
-                });
-            }
-
-            setError('Failed to send message. Will retry when connected.');
+            setError('Failed to send message');
             return false;
         }
-    }, [exchangeId, currentUser.id, connectionStatus, sortMessagesByOrder]);
+    }, [exchangeId, currentUser?.supabaseId]);
 
-    // Handle typing indicators
+    // Typing indicators
     const startTyping = useCallback(() => {
         if (!isTypingRef.current && connectionStatus === 'connected') {
             isTypingRef.current = true;
@@ -404,196 +167,158 @@ export function useExchangeChat(exchangeId, currentUser) {
         }
     }, [exchangeId]);
 
-    // Enhanced connection management with retry logic
+    // Connect to exchange chat
     const connectToExchange = useCallback(async () => {
         const socketManager = socketManagerRef.current;
 
         try {
+            // Check if chat is available
+            const statusRes = await fetch(`/api/exchanges/${exchangeId}/chat-status`);
+            const statusData = await statusRes.json();
+
+            if (!statusData.success || !statusData.chatStatus.available) {
+                setError(statusData.error || statusData.chatStatus.message || 'Chat not available');
+                setConnectionStatus('disconnected');
+                return;
+            }
+
+            // Connect socket
             await socketManager.connect();
             socketManager.joinExchangeChat(exchangeId);
+
             setConnectionStatus('connected');
-            setConnectionQuality('good');
             setError(null);
 
-            retryCountRef.current = 0;
-            startHeartbeat();
-
-            // Sync messages first, then process queue
-            await syncMessages();
-            await processMessageQueue();
-
         } catch (error) {
-            console.error('Socket connection failed:', error);
+            console.error('Connection failed:', error);
             setConnectionStatus('disconnected');
-            setConnectionQuality('offline');
-
-            if (retryCountRef.current < maxRetriesRef.current) {
-                const delay = getRetryDelay();
-                retryCountRef.current++;
-
-                setError(`Connection failed. Retrying in ${Math.ceil(delay / 1000)}s... (${retryCountRef.current}/${maxRetriesRef.current})`);
-
-                reconnectTimeoutRef.current = setTimeout(() => {
-                    connectToExchange();
-                }, delay);
-            } else {
-                setError('Connection failed. Please refresh the page to try again.');
-            }
+            setError('Failed to connect to chat');
         }
-    }, [exchangeId, syncMessages, processMessageQueue, startHeartbeat, getRetryDelay]);
+    }, [exchangeId]);
 
-    // Socket connection management
+    // Load messages on mount
+    useEffect(() => {
+        loadMessages();
+    }, [loadMessages]);
+
+    // Connect to socket on mount
     useEffect(() => {
         connectToExchange();
 
         return () => {
-            if (reconnectTimeoutRef.current) {
-                clearTimeout(reconnectTimeoutRef.current);
-            }
-            stopHeartbeat();
             socketManagerRef.current?.leaveExchangeChat();
         };
-    }, [connectToExchange, stopHeartbeat]);
+    }, [connectToExchange]);
 
-    // Enhanced socket event handlers
+    // Socket event handlers
     useEffect(() => {
         const socketManager = socketManagerRef.current;
         if (!socketManager?.isReady()) return;
 
-        // NEW Step 10: Enhanced message handling with conflict resolution
+        // Handle new messages from other users
         const handleNewMessage = (messageData) => {
-            if (messageData.sender.supabaseId !== currentUser.id) {
-                // Check for duplicates
-                if (isDuplicateMessage(messageData)) {
-                    return;
+            if (messageData.sender.supabaseId !== currentUser?.supabaseId) {
+                // Simple duplicate check by ID
+                if (!isDuplicateMessage(messageData, messages)) {
+                    setMessages(prev => [...prev, { ...messageData, status: 'received' }]);
+
+                    // Auto-mark as read after a short delay
+                    setTimeout(markAsRead, 1000);
                 }
-
-                setMessages(prev => {
-                    const updated = [...prev, { ...messageData, status: 'received' }];
-                    return sortMessagesByOrder(updated);
-                });
-
-                // Track message and update sequence
-                messageHistoryRef.current.add(messageData._id);
-                if (messageData.sequence) {
-                    lastServerSequenceRef.current = Math.max(
-                        lastServerSequenceRef.current,
-                        messageData.sequence
-                    );
-                }
-
-                setTimeout(markAsRead, 1000);
             }
         };
 
-        // Handle system messages
-        const handleSystemMessage = (systemData) => {
-            if (!isDuplicateMessage(systemData)) {
-                setMessages(prev => {
-                    const updated = [...prev, { ...systemData, status: 'system' }];
-                    return sortMessagesByOrder(updated);
-                });
-                messageHistoryRef.current.add(systemData._id);
+        // Handle message delivery confirmation
+        const handleMessageDelivered = (data) => {
+            if (data.tempId) {
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg._id === data.tempId
+                            ? { ...msg, _id: data.messageId, status: 'delivered' }
+                            : msg
+                    )
+                );
             }
         };
 
         // Handle typing indicators
         const handleTyping = (typingData) => {
-            if (typingData.userSupabaseId !== currentUser.id) {
+            if (typingData.userSupabaseId !== currentUser?.supabaseId) {
                 setOtherUserTyping(typingData.isTyping);
             }
         };
 
-        // Enhanced message delivery confirmation
-        const handleMessageDelivered = (data) => {
-            confirmMessageDelivery(data.messageId, data.tempId);
+        // Handle chat closed
+        const handleChatClosed = (data) => {
+            setError(`Chat closed: ${data.reason}`);
+            setConnectionStatus('disconnected');
         };
 
-        // Handle heartbeat responses
-        const handleHeartbeatResponse = () => {
-            lastHeartbeatRef.current = Date.now();
-            setConnectionQuality('good');
+        // Handle chat errors
+        const handleChatError = (error) => {
+            setError(error.message || 'Chat error occurred');
+            setConnectionStatus('disconnected');
         };
 
-        // Enhanced connection status handlers
+        // Handle connection events
         const handleDisconnect = () => {
             setConnectionStatus('disconnected');
-            setConnectionQuality('offline');
-            setError('Disconnected. Attempting to reconnect...');
-            stopHeartbeat();
-
-            setTimeout(() => {
-                connectToExchange();
-            }, 2000);
+            setError('Disconnected from chat');
         };
 
         const handleReconnect = () => {
             setConnectionStatus('connected');
-            setConnectionQuality('good');
             setError(null);
-            retryCountRef.current = 0;
-            startHeartbeat();
-            syncMessages(); // Sync with reconciliation
+            loadMessages(); // Refresh messages on reconnect
         };
 
         // Attach event listeners
         socketManager.onNewExchangeMessage(handleNewMessage);
-        socketManager.onOfferSystemMessage(handleSystemMessage);
-        socketManager.onStatusSystemMessage(handleSystemMessage);
+        socketManager.onMessageDelivered(handleMessageDelivered);
         socketManager.onUserTyping(handleTyping);
-        socketManager.onChatClosed(() => setError('Chat has been closed'));
+        socketManager.onChatClosed(handleChatClosed);
+        socketManager.onChatError(handleChatError);
 
-        socketManager.socket?.on('message-delivered', handleMessageDelivered);
-        socketManager.socket?.on('heartbeat-response', handleHeartbeatResponse);
         socketManager.socket?.on('disconnect', handleDisconnect);
         socketManager.socket?.on('reconnect', handleReconnect);
 
         return () => {
+            // Cleanup event listeners
             socketManager.offNewExchangeMessage(handleNewMessage);
-            socketManager.offOfferSystemMessage(handleSystemMessage);
-            socketManager.offStatusSystemMessage(handleSystemMessage);
+            socketManager.offMessageDelivered(handleMessageDelivered);
             socketManager.offUserTyping(handleTyping);
-            socketManager.socket?.off('message-delivered', handleMessageDelivered);
-            socketManager.socket?.off('heartbeat-response', handleHeartbeatResponse);
+            socketManager.offChatClosed(handleChatClosed);
+            socketManager.offChatError(handleChatError);
+
             socketManager.socket?.off('disconnect', handleDisconnect);
             socketManager.socket?.off('reconnect', handleReconnect);
         };
-    }, [currentUser.id, syncMessages, markAsRead, confirmMessageDelivery, connectToExchange, startHeartbeat, stopHeartbeat, isDuplicateMessage, sortMessagesByOrder]);
-
-    // Initial message sync
-    useEffect(() => {
-        syncMessages();
-    }, [syncMessages]);
+    }, [currentUser?.supabaseId, messages, markAsRead, loadMessages]);
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
             stopTyping();
-            stopHeartbeat();
             if (typingTimeoutRef.current) {
                 clearTimeout(typingTimeoutRef.current);
             }
-            if (reconnectTimeoutRef.current) {
-                clearTimeout(reconnectTimeoutRef.current);
-            }
         };
-    }, [stopTyping, stopHeartbeat]);
+    }, [stopTyping]);
 
     return {
         // State
         messages,
         connectionStatus,
-        connectionQuality,
         error,
         otherUserTyping,
-        isSyncing, // NEW
+        loading,
 
         // Actions
         sendMessage,
         startTyping,
         stopTyping,
         markAsRead,
-        syncMessages,
+        loadMessages,
 
         // Utils
         isConnected: connectionStatus === 'connected',

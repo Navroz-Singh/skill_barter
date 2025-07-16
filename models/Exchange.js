@@ -1,3 +1,4 @@
+// models/Exchange.js
 import mongoose from 'mongoose';
 
 const exchangeSchema = new mongoose.Schema({
@@ -33,10 +34,10 @@ const exchangeSchema = new mongoose.Schema({
         }
     },
 
-    // Exchange Type
+    // UPDATED: Exchange Type (simplified from 3 to 2 types)
     exchangeType: {
         type: String,
-        enum: ['skill_for_skill', 'skill_for_money', 'money_for_skill'],
+        enum: ['skill_for_skill', 'skill_for_money'],
         required: true
     },
 
@@ -110,13 +111,29 @@ const exchangeSchema = new mongoose.Schema({
         }
     },
 
+    // Two-Step Acceptance System
+    acceptance: {
+        initiatorAccepted: {
+            type: Boolean,
+            default: false
+        },
+        recipientAccepted: {
+            type: Boolean,
+            default: false
+        },
+        initiatorAcceptedAt: Date,
+        recipientAcceptedAt: Date,
+        fullyAcceptedAt: Date // When both users have accepted
+    },
+
     // Exchange Status
     status: {
         type: String,
         enum: [
             'pending',
             'negotiating',
-            'accepted',
+            'pending_acceptance', // One user accepted, waiting for other
+            'accepted',           // Both users accepted
             'in_progress',
             'completed',
             'cancelled',
@@ -150,9 +167,7 @@ const exchangeSchema = new mongoose.Schema({
             default: false
         },
         initiatorDeliveredAt: Date,
-        recipientDelivered
-
-            : Date,
+        recipientDeliveredAt: Date,
         deliveryNotes: {
             initiator: String,
             recipient: String
@@ -194,42 +209,101 @@ const exchangeSchema = new mongoose.Schema({
     },
 
     chatMetadata: {
-        firstMessageAt: Date,           // When chat conversation started
-        lastMessageAt: Date,            // Last message timestamp
-        messageCount: {                 // Quick message count tracking
+        firstMessageAt: Date,
+        lastMessageAt: Date,
+        messageCount: {
             type: Number,
             default: 0
         },
-        lastActivityBy: {               // Who was last active in chat
-            type: String,               // supabaseId
+        lastActivityBy: {
+            type: String,
             enum: ['initiator', 'recipient']
         }
     },
 
-    // Negotiation Progress Tracking (NEW)
+    // Negotiation Progress Tracking with completion fields
     negotiationMetadata: {
-        roundCount: {                   // How many negotiation rounds
+        roundCount: {
             type: Number,
             default: 0
         },
-        lastNegotiationUpdate: Date,    // When offers were last modified
-        negotiationStartedAt: Date,     // When status changed to 'negotiating'
-        acceptedAt: Date               // When status changed to 'accepted'
+        lastNegotiationUpdate: Date,
+        negotiationStartedAt: Date,
+        acceptedAt: Date,
+        // Fields to track negotiation completion
+        negotiationCompleted: {
+            type: Boolean,
+            default: false
+        },
+        negotiationCompletedAt: Date
     },
 
-    // Activity Timestamps (NEW)
+    // Activity Timestamps
     activityTimestamps: {
-        initiatorLastSeen: Date,        // Last time initiator was active
-        recipientLastSeen: Date,        // Last time recipient was active
-        statusChangedAt: Date,          // When current status was set
-        lastOfferUpdateAt: Date         // When any offer was last updated
-    }
+        initiatorLastSeen: Date,
+        recipientLastSeen: Date,
+        statusChangedAt: Date,
+        lastOfferUpdateAt: Date
+    },
+
+    // Dispute Status
+    disputeStatus: {
+        hasDispute: { 
+          type: Boolean, 
+          default: false 
+        }
+      }
 }, {
     timestamps: true
 });
 
+// Method to handle user acceptance
+exchangeSchema.methods.acceptByUser = function(userSupabaseId) {
+    const isInitiator = this.initiator.supabaseId === userSupabaseId;
+    const now = new Date();
+    
+    if (isInitiator) {
+        this.acceptance.initiatorAccepted = true;
+        this.acceptance.initiatorAcceptedAt = now;
+    } else {
+        this.acceptance.recipientAccepted = true;
+        this.acceptance.recipientAcceptedAt = now;
+    }
+    
+    // Check if both have accepted
+    if (this.acceptance.initiatorAccepted && this.acceptance.recipientAccepted) {
+        this.status = 'accepted';
+        this.acceptance.fullyAcceptedAt = now;
+        this.negotiationMetadata.acceptedAt = now;
+        
+    } else {
+        this.status = 'pending_acceptance';
+    }
+    
+    this.activityTimestamps.statusChangedAt = now;
+    return this;
+};
+
+// Method to check if user has accepted
+exchangeSchema.methods.hasUserAccepted = function(userSupabaseId) {
+    const isInitiator = this.initiator.supabaseId === userSupabaseId;
+    return isInitiator ? this.acceptance?.initiatorAccepted : this.acceptance?.recipientAccepted;
+};
+
+// Method to get acceptance status
+exchangeSchema.methods.getAcceptanceStatus = function() {
+    return {
+        initiatorAccepted: this.acceptance?.initiatorAccepted || false,
+        recipientAccepted: this.acceptance?.recipientAccepted || false,
+        bothAccepted: (this.acceptance?.initiatorAccepted && this.acceptance?.recipientAccepted) || false,
+        pendingUser: !this.acceptance?.initiatorAccepted ? 'initiator' : 
+                     !this.acceptance?.recipientAccepted ? 'recipient' : null
+    };
+};
+
+// Chat availability includes pending_acceptance
 exchangeSchema.methods.isChatAvailable = function () {
-    return ['negotiating', 'accepted', 'in_progress'].includes(this.status);
+    return ['negotiating', 'pending_acceptance', 'accepted', 'in_progress'].includes(this.status);
 };
 
 exchangeSchema.methods.getChatParticipants = function () {

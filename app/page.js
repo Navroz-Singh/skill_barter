@@ -1,3 +1,5 @@
+'use client';
+
 import HeroSection from "@/components/ui/hero-section";
 import HowItWorksSection from "@/components/ui/how-it-works-section";
 import FeaturedSkillsSection from "@/components/ui/featured-skills-section";

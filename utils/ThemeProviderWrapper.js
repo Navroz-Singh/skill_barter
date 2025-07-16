@@ -1,5 +1,5 @@
 'use client';
-import { ThemeProvider } from '@/components/Providers/ThemeProvider';
+import { ThemeProvider } from '@/Providers/ThemeProvider';
 
 export default function ThemeProviderWrapper({ children, initialTheme }) {
     return (

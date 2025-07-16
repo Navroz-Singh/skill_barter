@@ -79,6 +79,17 @@ const UserSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    profileEditedFields: {
+        name: { type: Boolean, default: false },
+        avatar: { type: Boolean, default: false },
+        bio: { type: Boolean, default: false },
+        location: { type: Boolean, default: false }
+    },
+    adminMetadata: {
+        isAdmin: { type: Boolean, default: false },
+        disputesHandled: { type: Number, default: 0 },
+        lastAdminActivity: Date
+      }
 }, {
     timestamps: true, // Keeps createdAt and updatedAt
 });

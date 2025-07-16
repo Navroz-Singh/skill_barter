@@ -1,9 +1,8 @@
-// api/exchanges
+// api/exchanges/route.js
 
 import connectDB from '@/lib/mongodb';
 import Exchange from '@/models/Exchange';
 import User from '@/models/User';
-import Message from '@/models/Message';
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -128,8 +127,8 @@ export async function POST(request) {
             );
         }
 
-        // Validate exchangeType
-        const validExchangeTypes = ['skill_for_skill', 'skill_for_money', 'money_for_skill'];
+        // UPDATED: Validate exchangeType (removed 'money_for_skill')
+        const validExchangeTypes = ['skill_for_skill', 'skill_for_money'];
         if (!validExchangeTypes.includes(exchangeType)) {
             return NextResponse.json(
                 { success: false, error: 'Invalid exchangeType' },
@@ -211,25 +210,6 @@ export async function POST(request) {
         // Populate the saved exchange for response
         await savedExchange.populate('initiator.userId', 'name email');
         await savedExchange.populate('recipient.userId', 'name email');
-
-        // Create initial system message for the exchange
-        try {
-            await Message.create({
-                exchangeId: savedExchange._id,
-                type: 'system',
-                systemData: {
-                    event: 'exchange_created',
-                    details: {
-                        exchangeType: savedExchange.exchangeType,
-                        initiator: initiatorSupabaseId,
-                        recipient: recipientSupabaseId
-                    }
-                }
-            });
-        } catch (msgError) {
-            console.error('Error creating initial message:', msgError);
-            // Continue even if message creation fails
-        }
 
         return NextResponse.json({
             success: true,

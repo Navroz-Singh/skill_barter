@@ -1,6 +1,8 @@
+// components/skills/SkillDetailsCard.js
 'use client';
 
 import { Star, Eye, RotateCcw, Timer, Building, Monitor, Globe, MapPin, Calendar, CheckCircle, Clock, ArrowRightLeft, DollarSign } from 'lucide-react';
+import ImageCarousel from '@/components/skills/ImageCarousel';
 
 export default function SkillDetailsCard({ skillData }) {
     // Helper functions
@@ -111,6 +113,17 @@ export default function SkillDetailsCard({ skillData }) {
                     </div>
                 </div>
             </div>
+
+            {/* SKILL IMAGES CAROUSEL */}
+            {skillData.images && skillData.images.length > 0 && (
+                <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Skill Gallery</h2>
+                    <ImageCarousel 
+                        images={skillData.images} 
+                        title={skillData.title}
+                    />
+                </div>
+            )}
 
             {/* SKILL DESCRIPTION */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
