@@ -9,8 +9,9 @@ import Exchange from './models/Exchange.js';
 import User from './models/User.js';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = 'localhost';
-const port = 3000;
+const hostname = dev ? 'localhost' : '0.0.0.0';
+const port = parseInt(process.env.PORT, 10) || 3000;
+const socketPort = parseInt(process.env.SOCKET_PORT, 10) || 3001;
 
 // Prepare the Next.js app
 const app = next({ dev, hostname, port });
@@ -20,19 +21,28 @@ app.prepare().then(() => {
     // Create HTTP server
     const httpServer = createServer(handler);
 
-    // Create Socket.IO server
+    // Create Socket.IO server with enhanced configuration
     const io = new Server(httpServer, {
         cors: {
             origin: process.env.NODE_ENV === 'production'
-                ? process.env.NEXT_PUBLIC_SITE_URL
-                : "http://localhost:3000",
-            methods: ["GET", "POST"]
-        }
+                ? [
+                    process.env.NEXT_PUBLIC_SITE_URL,
+                    `https://${process.env.VERCEL_URL || 'localhost'}`,
+                    `https://${process.env.RAILWAY_STATIC_URL || 'localhost'}`
+                ].filter(Boolean)
+                : ["http://localhost:3000", "http://localhost:3001"],
+            methods: ["GET", "POST"],
+            credentials: true
+        },
+        transports: ['websocket', 'polling'],
+        allowEIO3: true,
+        pingTimeout: 60000,
+        pingInterval: 25000
     });
 
-    // Socket.IO connection handling
+    // Enhanced connection logging
     io.on('connection', (socket) => {
-        console.log('User connected:', socket.id);
+        console.log(`[${new Date().toISOString()}] User connected: ${socket.id}`);
 
         // Join exchange room (single room for chat + negotiation)
         socket.on('join-exchange-chat', async (data) => {
@@ -57,7 +67,7 @@ app.prepare().then(() => {
                     return;
                 }
 
-                // UPDATED: Check if chat is available for current status (includes pending_acceptance)
+                // Check if chat is available for current status (includes pending_acceptance)
                 const chatAvailableStatuses = ['negotiating', 'pending_acceptance', 'accepted', 'in_progress'];
                 if (!chatAvailableStatuses.includes(exchange.status)) {
                     socket.emit('chat-error', {
@@ -83,10 +93,18 @@ app.prepare().then(() => {
                 socket.currentRoom = roomName;
                 socket.userRole = exchange.initiator.supabaseId === userSupabaseId ? 'initiator' : 'recipient';
 
-                console.log(`User ${userSupabaseId} (${socket.userRole}) joined exchange ${exchangeId}`);
+                console.log(`[${new Date().toISOString()}] User ${userSupabaseId} (${socket.userRole}) joined exchange ${exchangeId}`);
+
+                // Send join confirmation
+                socket.emit('chat-joined', {
+                    exchangeId,
+                    roomName,
+                    userRole: socket.userRole,
+                    status: exchange.status
+                });
 
             } catch (error) {
-                console.error('Error joining exchange chat:', error);
+                console.error(`[${new Date().toISOString()}] Error joining exchange chat:`, error);
                 socket.emit('chat-error', { message: 'Failed to join exchange chat' });
             }
         });
@@ -103,7 +121,7 @@ app.prepare().then(() => {
             try {
                 await connectDB();
 
-                // UPDATED: Verify exchange is still available for chat (includes pending_acceptance)
+                // Verify exchange is still available for chat (includes pending_acceptance)
                 const exchange = await Exchange.findById(exchangeId);
                 if (!exchange || !['negotiating', 'pending_acceptance', 'accepted', 'in_progress'].includes(exchange.status)) {
                     socket.emit('chat-error', { message: 'Chat no longer available for this exchange' });
@@ -154,10 +172,10 @@ app.prepare().then(() => {
                     });
                 }
 
-                console.log(`Message sent in exchange ${exchangeId}`);
+                console.log(`[${new Date().toISOString()}] Message sent in exchange ${exchangeId}`);
 
             } catch (error) {
-                console.error('Error sending exchange message:', error);
+                console.error(`[${new Date().toISOString()}] Error sending exchange message:`, error);
                 socket.emit('chat-error', { message: 'Failed to send message' });
             }
         });
@@ -176,11 +194,11 @@ app.prepare().then(() => {
                     timestamp: new Date().toISOString()
                 });
 
-                console.log(`Offer updated in exchange ${exchangeId} by ${socket.userSupabaseId}`);
+                console.log(`[${new Date().toISOString()}] Offer updated in exchange ${exchangeId} by ${socket.userSupabaseId}`);
             }
         });
 
-        // NEW: Handle user acceptance events
+        // Handle user acceptance events
         socket.on('user-accepted', (data) => {
             const { exchangeId, userSupabaseId, newStatus, acceptanceData, message } = data;
 
@@ -195,11 +213,11 @@ app.prepare().then(() => {
                     timestamp: new Date().toISOString()
                 });
 
-                console.log(`User ${userSupabaseId} accepted exchange ${exchangeId}. New status: ${newStatus}`);
+                console.log(`[${new Date().toISOString()}] User ${userSupabaseId} accepted exchange ${exchangeId}. New status: ${newStatus}`);
             }
         });
 
-        // UPDATED: Handle exchange status changes (includes acceptance data)
+        // Handle exchange status changes (includes acceptance data)
         socket.on('status-changed', (data) => {
             const { exchangeId, newStatus, previousStatus, acceptanceData } = data;
 
@@ -209,7 +227,7 @@ app.prepare().then(() => {
                     exchangeId,
                     newStatus,
                     previousStatus,
-                    acceptanceData, // NEW: Include acceptance data
+                    acceptanceData,
                     timestamp: new Date().toISOString()
                 });
 
@@ -222,7 +240,7 @@ app.prepare().then(() => {
                     });
                 }
 
-                console.log(`Exchange ${exchangeId} status changed from ${previousStatus} to ${newStatus}`);
+                console.log(`[${new Date().toISOString()}] Exchange ${exchangeId} status changed from ${previousStatus} to ${newStatus}`);
             }
         });
 
@@ -250,27 +268,55 @@ app.prepare().then(() => {
         // Leave exchange room
         socket.on('leave-exchange-chat', () => {
             if (socket.currentRoom && socket.userSupabaseId) {
-                console.log(`User ${socket.userSupabaseId} leaving exchange ${socket.currentExchangeId}`);
+                console.log(`[${new Date().toISOString()}] User ${socket.userSupabaseId} leaving exchange ${socket.currentExchangeId}`);
                 socket.leave(socket.currentRoom);
             }
         });
 
         // Handle disconnection
         socket.on('disconnect', (reason) => {
-            console.log('User disconnected:', socket.id, 'Reason:', reason);
+            console.log(`[${new Date().toISOString()}] User disconnected: ${socket.id}, Reason: ${reason}`);
         });
 
         // Basic error handling
         socket.on('error', (error) => {
-            console.error('Socket error for user:', socket.userSupabaseId, error);
+            console.error(`[${new Date().toISOString()}] Socket error for user:`, socket.userSupabaseId, error);
             socket.emit('chat-error', { message: 'Connection error occurred' });
         });
     });
 
-    // Start the server
-    httpServer.listen(port, (err) => {
-        if (err) throw err;
-        console.log(`> Ready on http://${hostname}:${port}`);
-        console.log('> Socket.IO server running with simplified exchange chat and two-step acceptance');
+    // Graceful shutdown handling
+    process.on('SIGTERM', () => {
+        console.log(`[${new Date().toISOString()}] SIGTERM received, shutting down gracefully`);
+        httpServer.close(() => {
+            console.log(`[${new Date().toISOString()}] Server closed`);
+            process.exit(0);
+        });
     });
+
+    process.on('SIGINT', () => {
+        console.log(`[${new Date().toISOString()}] SIGINT received, shutting down gracefully`);
+        httpServer.close(() => {
+            console.log(`[${new Date().toISOString()}] Server closed`);
+            process.exit(0);
+        });
+    });
+
+    // Start the server
+    httpServer.listen(port, hostname, (err) => {
+        if (err) throw err;
+        console.log(`[${new Date().toISOString()}] > Ready on http://${hostname}:${port}`);
+        console.log(`[${new Date().toISOString()}] > Environment: ${process.env.NODE_ENV}`);
+        console.log(`[${new Date().toISOString()}] > Socket.IO server running with simplified exchange chat and two-step acceptance`);
+
+        // Log environment configuration
+        if (dev) {
+            console.log(`[${new Date().toISOString()}] > Development mode - CORS: http://localhost:3000`);
+        } else {
+            console.log(`[${new Date().toISOString()}] > Production mode - CORS: ${process.env.NEXT_PUBLIC_SITE_URL}`);
+        }
+    });
+}).catch((ex) => {
+    console.error(`[${new Date().toISOString()}] Error starting server:`, ex);
+    process.exit(1);
 });

@@ -48,7 +48,7 @@ export async function GET(request) {
         }
 
         // Step 4: Success - redirect to dashboard
-        return NextResponse.redirect(`${origin}/`);
+        return NextResponse.redirect(`${origin}/profile`);
 
     } catch (error) {
         console.error('OAuth callback error:', error);
